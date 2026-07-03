@@ -9,7 +9,11 @@ ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
 str.title("🎯 Живой Навигатор WRO 2026")
-str.write("Свободно перетаскивай оба квадрата. Крути колёсико мыши над СТАРТом для смены направления. Синий квадрат сам магнитится к осям при погрешности < 3.5°!")
+str.write("Свободно перетаскивай оба квадрата. Слайдер снизу теперь жестко управляет стрелкой старта!")
+
+# Инициализируем угол старта в сессии Python, чтобы он не сбрасывался
+if "start_angle" not in str.session_state:
+    str.session_state.start_angle = 0
 
 # 1. Поиск картинки поля
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
@@ -33,7 +37,12 @@ START_Y = 950
 END_X = 800
 END_Y = 500
 
-# 2. Монолитный HTML/JS интерфейс
+# 2. Слайдер управления углом (теперь он главный)
+str.markdown("### 🧭 Настройка направления старта:")
+angle_slider = str.slider("Повернуть стрелку старта (градусы):", -180, 180, int(str.session_state.start_angle), step=5)
+str.session_state.start_angle = angle_slider
+
+# 3. HTML/JS интерфейс, куда напрямую прокидывается значение из слайдера
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
@@ -63,7 +72,7 @@ html_code = f"""
         <div id="snap_info" style="font-size: 12px; color: #ffeb3b; height: 14px; margin-top: 2px; font-weight: bold;"></div>
     </div>
     <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">📍 Ориентация старта:</span>
+        <span style="color: #aaa; font-size: 14px;">📍 Направление старта:</span>
         <div id="live_start_angle" style="font-size: 24px; font-weight: bold; color: #29b6f6;">0°</div>
     </div>
 </div>
@@ -96,7 +105,9 @@ const blockCode = document.getElementById('live_code');
 
 let p1 = {{ x: {START_X}, y: {START_Y} }};
 let p2 = {{ x: {END_X}, y: {END_Y} }};
-let startAngleDeg = 0; 
+
+// Передаем угол напрямую из ползунка Python в JS переменную
+let startAngleDeg = {angle_slider}; 
 
 function drawScene() {{
     const kW = img.clientWidth / W_MM;
@@ -153,6 +164,7 @@ function drawScene() {{
     bStart.style.left = (p1.x * kW - sizeW/2) + 'px'; bStart.style.top = (p1.y * kH - sizeH/2) + 'px';
     bEnd.style.left = (p2.x * kW - sizeW/2) + 'px'; bEnd.style.top = (p2.y * kH - sizeH/2) + 'px';
     
+    // Синхронизация поворота стрелки на карте со слайдером
     arrow.style.transform = "rotate(" + (-startAngleDeg + 90) + "deg)";
     txtStartAngle.innerText = Math.round(startAngleDeg) + '°';
     
@@ -172,17 +184,6 @@ function drawScene() {{
     let finalTurn = parseFloat(txtAngle.innerText);
     blockCode.innerText = "robot.turn(" + Math.round(finalTurn) + ")\\nrobot.straight(" + Math.round(distance) + ")";
 }}
-
-// ИСПРАВЛЕНО: Колесико мыши теперь четко крутит стрелку старта
-bStart.addEventListener('wheel', (e) => {{
-    e.preventDefault();
-    if (e.deltaY < 0) {{
-        startAngleDeg = (startAngleDeg + 5) % 360;
-    }} else {{
-        startAngleDeg = (startAngleDeg - 5 + 360) % 360;
-    }}
-    drawScene();
-}}, {{ passive: false }});
 
 function setupDrag(el, pObject) {{
     let isDragging = false;
@@ -215,25 +216,8 @@ setupDrag(bEnd, p2);
 img.onload = drawScene;
 window.addEventListener('resize', drawScene);
 if (img.complete) drawScene();
-
-window.addEventListener('message', (e) => {{
-    if(e.data && e.data.type === 'set_angle') {{
-        startAngleDeg = e.data.angle;
-        drawScene();
-    }}
-}});
 </script>
 """
 
 import streamlit.components.v1 as components
 components.html(html_code, height=760, scrolling=False)
-
-str.markdown("### 🧭 Точная настройка направления старта:")
-angle_slider = str.slider("Направление старта (градусы):", -180, 180, 0, step=5)
-
-js_bridge = f"""
-<script>
-window.parent.postMessage({{type: 'set_angle', angle: {angle_slider}}}, '*');
-</script>
-"""
-components.html(js_bridge, height=0)

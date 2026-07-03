@@ -33,7 +33,7 @@ START_Y = 950
 END_X = 800
 END_Y = 500
 
-# 2. Монолитный HTML/JS интерфейс с физическим примагничиванием координат
+# 2. Монолитный HTML/JS интерфейс
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
@@ -60,7 +60,7 @@ html_code = f"""
     <div style="flex: 1;">
         <span style="color: #aaa; font-size: 14px;">🧭 Угол разворота:</span>
         <div id="live_angle" style="font-size: 24px; font-weight: bold; color: #00e676;">0.0°</div>
-        <div id="snap_info" style="font-size: 12px; color: #ff4b4b; height: 14px; margin-top: 2px; font-weight: bold;"></div>
+        <div id="snap_info" style="font-size: 12px; color: #ffeb3b; height: 14px; margin-top: 2px; font-weight: bold;"></div>
     </div>
     <div style="flex: 1;">
         <span style="color: #aaa; font-size: 14px;">📍 Ориентация старта:</span>
@@ -78,7 +78,7 @@ html_code = f"""
 const W_MM = {FIELD_WIDTH_MM};
 const H_MM = {FIELD_HEIGHT_MM};
 const ROB_MM = {ZONE_SIZE_MM};
-const SNAP_THRESHOLD = 3.5; // Погрешность в градусах
+const SNAP_THRESHOLD = 3.5; 
 
 const img = document.getElementById('field');
 const canvas = document.getElementById('overlay');
@@ -104,19 +104,17 @@ function drawScene() {{
     const sizeW = ROB_MM * kW;
     const sizeH = ROB_MM * kH;
     
-    // Вычисляем базовый вектор от старта до текущего положения курсора/робота
     let dx = p2.x - p1.x;
     let dy = -(p2.y - p1.y);
     let distance = Math.sqrt(dx*dx + dy*dy);
     
     if (distance > 5) {{
-        let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+        let moveAngle = Math.beta = Math.atan2(dy, dx) * (180 / Math.PI);
         let turnAngle = moveAngle - startAngleDeg;
         
         while (turnAngle > 180) turnAngle -= 360;
         while (turnAngle <= -180) turnAngle += 360;
         
-        // Магнитные цели (0, 45, 90, 135, 180, -45, -90, -135)
         const targets = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
         let targetAngle = null;
         
@@ -127,21 +125,18 @@ function drawScene() {{
             }}
         }}
         
-        // ЕСЛИ ПОПАЛИ В ПОГРЕШНОСТЬ 3.5 ГРАДУСА — КОРРЕКТИРУЕМ САМИ КООРДИНАТЫ КВАДРАТА РОБОТА
         if (targetAngle !== null) {{
             let absoluteTargetAngle = targetAngle + startAngleDeg;
             let rad = absoluteTargetAngle * (Math.PI / 180);
             
-            // Физически пересчитываем p2, чтобы квадрат прилип к линии
             p2.x = p1.x + distance * Math.cos(rad);
-            p2.y = p1.y - distance * Math.sin(rad); // Минус, так как на экране Y идет вниз
+            p2.y = p1.y - distance * Math.sin(rad); 
             
-            // Пересчитываем дельты для отрисовки по скорректированной траектории
             dx = p2.x - p1.x;
             dy = -(p2.y - p1.y);
             turnAngle = targetAngle;
             
-            snapInfo.innerText = `🧲 Квадрат примагничен к оси ${{targetAngle}}°`;
+            snapInfo.innerText = "🧲 Квадрат примагничен к оси " + targetAngle + "°";
         }} else {{
             snapInfo.innerText = "";
         }}
@@ -152,14 +147,14 @@ function drawScene() {{
         snapInfo.innerText = "";
     }}
 
-    // Отрисовка элементов на скорректированных позициях
     bStart.style.width = sizeW + 'px'; bStart.style.height = sizeH + 'px';
     bEnd.style.width = sizeW + 'px'; bEnd.style.height = sizeH + 'px';
     
     bStart.style.left = (p1.x * kW - sizeW/2) + 'px'; bStart.style.top = (p1.y * kH - sizeH/2) + 'px';
     bEnd.style.left = (p2.x * kW - sizeW/2) + 'px'; bEnd.style.top = (p2.y * kH - sizeH/2) + 'px';
     
-    arrow.style.transform = `rotate(${-startAngleDeg + 90}deg)`;
+    // Исправлено экранирование для стрелки:
+    arrow.style.transform = "rotate(" + (-startAngleDeg + 90) + "deg)";
     txtStartAngle.innerText = Math.round(startAngleDeg) + '°';
     
     canvas.width = img.clientWidth;
@@ -176,7 +171,7 @@ function drawScene() {{
     txtDist.innerText = distance.toFixed(1) + ' мм';
     
     let finalTurn = parseFloat(txtAngle.innerText);
-    blockCode.innerText = `robot.turn(${Math.round(finalTurn)})\\nrobot.straight(${Math.round(distance)})`;
+    blockCode.innerText = "robot.turn(" + Math.round(finalTurn) + ")\\nrobot.straight(" + Math.round(distance) + ")";
 }}
 
 bStart.addEventListener('wheel', (e) => {{

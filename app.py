@@ -9,9 +9,9 @@ ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
 str.title("🎯 Живой Навигатор WRO 2026")
-str.write("Свободно перетаскивай оба квадрата. Слайдер снизу теперь жестко управляет стрелкой старта!")
+str.write("Свободно перетаскивай оба квадрата. Робот всегда выбирает оптимальное направление разворота (самый короткий путь)!")
 
-# Инициализируем угол старта в сессии Python, чтобы он не сбрасывался
+# Инициализируем угол старта в сессии Python
 if "start_angle" not in str.session_state:
     str.session_state.start_angle = 0
 
@@ -37,12 +37,12 @@ START_Y = 950
 END_X = 800
 END_Y = 500
 
-# 2. Слайдер управления углом (теперь он главный)
+# 2. Слайдер управления углом
 str.markdown("### 🧭 Настройка направления старта:")
 angle_slider = str.slider("Повернуть стрелку старта (градусы):", -180, 180, int(str.session_state.start_angle), step=5)
 str.session_state.start_angle = angle_slider
 
-# 3. HTML/JS интерфейс, куда напрямую прокидывается значение из слайдера
+# 3. HTML/JS интерфейс
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
@@ -67,7 +67,7 @@ html_code = f"""
         <div id="live_dist" style="font-size: 24px; font-weight: bold; color: #ffeb3b;">0.0 мм</div>
     </div>
     <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">🧭 Угол разворота:</span>
+        <span style="color: #aaa; font-size: 14px;">🧭 Оптимальный разворот:</span>
         <div id="live_angle" style="font-size: 24px; font-weight: bold; color: #00e676;">0.0°</div>
         <div id="snap_info" style="font-size: 12px; color: #ffeb3b; height: 14px; margin-top: 2px; font-weight: bold;"></div>
     </div>
@@ -105,8 +105,6 @@ const blockCode = document.getElementById('live_code');
 
 let p1 = {{ x: {START_X}, y: {START_Y} }};
 let p2 = {{ x: {END_X}, y: {END_Y} }};
-
-// Передаем угол напрямую из ползунка Python в JS переменную
 let startAngleDeg = {angle_slider}; 
 
 function drawScene() {{
@@ -123,8 +121,10 @@ function drawScene() {{
         let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
         let turnAngle = moveAngle - startAngleDeg;
         
-        while (turnAngle > 180) turnAngle -= 360;
-        while (turnAngle <= -180) turnAngle += 360;
+        // 🚀 АЛГОРИТМ КРАТЧАЙШЕГО ПУТИ (выбирает самый быстрый разворот)
+        turnAngle = (turnAngle + 180) % 360;
+        if (turnAngle < 0) turnAngle += 360;
+        turnAngle -= 180;
         
         const targets = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
         let targetAngle = null;
@@ -164,7 +164,6 @@ function drawScene() {{
     bStart.style.left = (p1.x * kW - sizeW/2) + 'px'; bStart.style.top = (p1.y * kH - sizeH/2) + 'px';
     bEnd.style.left = (p2.x * kW - sizeW/2) + 'px'; bEnd.style.top = (p2.y * kH - sizeH/2) + 'px';
     
-    // Синхронизация поворота стрелки на карте со слайдером
     arrow.style.transform = "rotate(" + (-startAngleDeg + 90) + "deg)";
     txtStartAngle.innerText = Math.round(startAngleDeg) + '°';
     

@@ -1,6 +1,7 @@
 import streamlit as str
 import os
 import math
+import base64
 from PIL import Image
 import folium
 from folium.plugins import MousePosition
@@ -13,7 +14,7 @@ ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
 str.title("🎯 Интерактивный Навигатор WRO 2026")
-str.write("Перетаскивай маркеры мышкой. Линия и дистанция обновятся автоматически.")
+str.write("Перетаскивай маркеры мышкой или двигай ползунки. Данные обновляются автоматически.")
 
 # Находим картинку поля в папке
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
@@ -27,7 +28,14 @@ if image_file is None:
     str.error("❌ Картинка поля не найдена в папке! Загрузите её в репозиторий.")
     str.stop()
 
-# Инициализация точек
+# Функция для безопасного кодирования картинки в Base64 (чтобы Folium не ругался)
+def get_image_base64(image_path):
+    with open(image_path, "rb") as img_file:
+        return f"data:image/png;base64,{base64.b64encode(img_file.read()).decode()}"
+
+image_data = get_image_base64(image_file)
+
+# Инициализация точек в памяти
 if "robot_start" not in str.session_state:
     str.session_state.robot_start = [400, 400]
 if "robot_end" not in str.session_state:
@@ -44,21 +52,19 @@ m = folium.Map(
 )
 
 bounds = [[0, 0], [FIELD_HEIGHT_MM, FIELD_WIDTH_MM]]
-folium.ImageOverlay(image=image_file, bounds=bounds).add_to(m)
+folium.ImageOverlay(image=image_data, bounds=bounds).add_to(m)
 
 # Рисуем элементы
 def add_robot_marker(m, coords, color, name):
-    # Прямоугольник (робот)
     half = ZONE_SIZE_MM / 2
     rect_bounds = [[coords[1] - half, coords[0] - half], [coords[1] + half, coords[0] + half]]
-    folium.Rectangle(bounds=rect_bounds, color=color, fill=True, fill_color=color, fill_opacity=0.5).add_to(m)
-    # Маркер для перетаскивания
+    folium.Rectangle(bounds=rect_bounds, color=color, fill=True, fill_color=color, fill_opacity=0.4).add_to(m)
     folium.Marker(location=[coords[1], coords[0]], draggable=True, tooltip=name).add_to(m)
 
 add_robot_marker(m, str.session_state.robot_start, "red", "Робот Старт")
 add_robot_marker(m, str.session_state.robot_end, "blue", "Робот Финиш")
 
-# Линия
+# Линия между роботами
 folium.PolyLine(
     locations=[
         [str.session_state.robot_start[1], str.session_state.robot_start[0]],
@@ -70,35 +76,35 @@ folium.PolyLine(
 m.fit_bounds(bounds)
 map_data = st_folium(m, width=1000, height=500)
 
-# Ювелирная подстройка
+# Интерактивные ползунки под картой
 str.markdown("---")
-str.subheader("🔧 Ручная подстройка координат (мм):")
+str.subheader("🔧 Управление позицией роботов (в миллиметрах):")
 col_s1, col_s2, col_e1, col_e2 = str.columns(4)
 
 with col_s1:
-    x1 = str.slider("X1", 0, FIELD_WIDTH_MM, int(str.session_state.robot_start[0]))
+    x1 = str.slider("Робот 1 - X", 0, FIELD_WIDTH_MM, int(str.session_state.robot_start[0]))
 with col_s2:
-    y1 = str.slider("Y1", 0, FIELD_HEIGHT_MM, int(str.session_state.robot_start[1]))
+    y1 = str.slider("Робот 1 - Y", 0, FIELD_HEIGHT_MM, int(str.session_state.robot_start[1]))
 with col_e1:
-    x2 = str.slider("X2", 0, FIELD_WIDTH_MM, int(str.session_state.robot_end[0]))
+    x2 = str.slider("Робот 2 - X", 0, FIELD_WIDTH_MM, int(str.session_state.robot_end[0]))
 with col_e2:
-    y2 = str.slider("Y2", 0, FIELD_HEIGHT_MM, int(str.session_state.robot_end[1]))
+    y2 = str.slider("Робот 2 - Y", 0, FIELD_HEIGHT_MM, int(str.session_state.robot_end[1]))
 
 str.session_state.robot_start = [x1, y1]
 str.session_state.robot_end = [x2, y2]
 
-# Математика
+# Математические расчеты движения
 dx = x2 - x1
 dy = y2 - y1 
 distance = (dx**2 + dy**2) ** 0.5
 angle_deg = math.degrees(math.atan2(dy, dx))
 
-# Результаты
+# Красивый вывод результатов расчета
 st_col1, st_col2 = str.columns(2)
 with st_col1:
-    str.metric("📏 Дистанция", f"{round(distance, 1)} мм")
+    str.metric("📏 Необходимая дистанция", f"{round(distance, 1)} мм")
 with st_col2:
-    str.metric("🧭 Угол", f"{round(angle_deg, 1)}°")
+    str.metric("🧭 Угол поворота", f"{round(angle_deg, 1)}°")
 
 str.subheader("💻 Код для Pybricks:")
 str.code(f"robot.turn({round(angle_deg)})\nrobot.straight({round(distance)})", language="python")

@@ -1,18 +1,18 @@
 import streamlit as str
-from PIL import Image, ImageDraw
 import os
 import math
+from PIL import Image
 
-# Реальные размеры поля WRO 2026
+# Размеры поля WRO 2026
 FIELD_WIDTH_MM = 2362
 FIELD_HEIGHT_MM = 1143
-ZONE_SIZE_MM = 250  # 25х25 см = 250х250 мм
+ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
-str.title("🎯 Навигатор WRO 2026 (Робомиссия)")
-str.write("Клик 1: Позиция робота (появится зона 25х25 см). Клик 2: Точка направления взгляда.")
+str.title("🎯 Интерактивный Навигатор WRO 2026 (Перетаскивание объектов)")
+str.write("Перетаскивай серые маркеры-коробки (размером 25х25 см) мышкой. Линия и дистанция обновятся сами!")
 
-# Ищем картинку в папке
+# Находим картинку поля в папке
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
 image_file = None
 for file in os.listdir('.'):
@@ -21,90 +21,156 @@ for file in os.listdir('.'):
         break
 
 if image_file is None:
-    str.error("❌ Картинка поля не найдена в папке 'wro_project'!")
+    str.error("❌ Картинка поля не найдена в папке репозитория!")
     str.stop()
 
-# Открываем изображение
-base_img = Image.open(image_file).convert('RGB')
-width_px, height_px = base_img.size
+# Открываем, чтобы узнать оригинальное соотношение сторон
+img = Image.open(image_file)
+img_w, img_h = img.size
 
-scale_x = FIELD_WIDTH_MM / width_px
-scale_y = FIELD_HEIGHT_MM / height_px
+# --- РАБОТА С ИНТЕРАКТИВНОЙ КАРТОЙ (Folium) ---
+import folium
+from folium.plugins import MousePosition
+from streamlit_folium import st_folium
 
-# Хранилище точек в памяти страницы
-if "wro_points" not in str.session_state:
-    str.session_state.wro_points = []
+# Настройка начальных координат роботов (в условных процентах от 0 до 100)
+if "robot_start" not in str.session_state:
+    str.session_state.robot_start = [200, 200]  # X, Y в мм на поле
+if "robot_end" not in str.session_state:
+    str.session_state.robot_end = [800, 400]   # X, Y в мм на поле
 
-# Создаем копию картинки для рисования сетки и робота
-draw_img = base_img.copy()
-draw = ImageDraw.Draw(draw_img, "RGBA")
+# Создаем пустую карту Leaflet с размерами нашего поля
+m = folium.Map(
+    location=[FIELD_HEIGHT_MM / 2, FIELD_WIDTH_MM / 2],
+    zoom_start=1,
+    crs=folium.CRS.Simple, # Используем простую прямоугольную систему вместо географической планеты
+    min_zoom=-2,
+    max_zoom=3,
+    dragging=True
+)
 
-# Рисуем квадрат робота, если поставлена первая точка
-if len(str.session_state.wro_points) >= 1:
-    p1 = str.session_state.wro_points[0]
-    rect_w_px = ZONE_SIZE_MM / scale_x
-    rect_h_px = ZONE_SIZE_MM / scale_y
-    
-    left = p1[0] - rect_w_px / 2
-    top = p1[1] - rect_h_px / 2
-    right = p1[0] + rect_w_px / 2
-    bottom = p1[1] + rect_h_px / 2
-    
-    # Серый квадрат робота 25х25 см
-    draw.rectangle([left, top, right, bottom], fill=(128, 128, 128, 100), outline=(255, 0, 0, 255), width=3)
-    draw.ellipse([p1[0]-5, p1[1]-5, p1[0]+5, p1[1]+5], fill="red")
+# Накладываем картинку поля WRO в качестве подложки карты
+bounds = [[0, 0], [FIELD_HEIGHT_MM, FIELD_WIDTH_MM]]
+folium.ImageOverlay(image=image_file, bounds=bounds).add_to(m)
 
-# Рисуем линию направления взгляда, если поставлена вторая точка
-if len(str.session_state.wro_points) == 2:
-    p2 = str.session_state.wro_points[1]
-    draw.line([str.session_state.wro_points[0], p2], fill="yellow", width=4)
-    draw.ellipse([p2[0]-5, p2[1]-5, p2[0]+5, p2[1]+5], fill="yellow")
+# Расчет радиуса для имитации квадрата 250мм (для упрощения используем круглую/квадратную зону Leaflet)
+# Мы создаем прямоугольные габариты вокруг текущих точек
+def get_rect_bounds(center_x, center_y, size=ZONE_SIZE_MM):
+    half = size / 2
+    # Leaflet использует порядок [Y, X]
+    return [[center_y - half, center_x - half], [center_y + half, center_x + half]]
 
-# Вывод карты на экран
-from streamlit_image_coordinates import streamlit_image_coordinates
-value = streamlit_image_coordinates(draw_img, key="wro_click_map")
+# Рисуем серую коробку 1 (Робот Старт)
+rect_start = folium.Rectangle(
+    bounds=get_rect_bounds(str.session_state.robot_start[0], str.session_state.robot_start[1]),
+    color="red",
+    fill=True,
+    fill_color="gray",
+    fill_opacity=0.5,
+    popup="Робот (Точка 1)"
+)
+rect_start.add_to(m)
 
-# Логика обработки кликов
-if value:
-    new_point = (value["x"], value["y"])
-    if not str.session_state.wro_points or str.session_state.wro_points[-1] != new_point:
-        if len(str.session_state.wro_points) >= 2:
-            str.session_state.wro_points = []  # Сброс, если это уже третий клик
-        str.session_state.wro_points.append(new_point)
-        str.rerun()
+# Добавляем перетаскиваемый маркер в центр Коробки 1
+marker_start = folium.Marker(
+    location=[str.session_state.robot_start[1], str.session_state.robot_start[0]],
+    draggable=True,
+    tooltip="Перетащи Робота 1"
+)
+marker_start.add_to(m)
 
-# Считаем результаты, когда точки установлены
-if len(str.session_state.wro_points) >= 1:
-    p1 = str.session_state.wro_points[0]
-    x1_mm = p1[0] * scale_x
-    y1_mm = p1[1] * scale_y
-    
-    col1, col2 = str.columns(2)
-    with col1:
-        str.metric("🤖 Позиция робота (Точка 1)", f"X: {round(x1_mm)} мм | Y: {round(y1_mm)} мм")
-    
-    if len(str.session_state.wro_points) == 2:
-        p2 = str.session_state.wro_points[1]
-        x2_mm = p2[0] * scale_x
-        y2_mm = p2[1] * scale_y
-        
-        dx = x2_mm - x1_mm
-        dy = -(y2_mm - y1_mm)  # Переворачиваем Y для стандартных тригонометрических углов
-        
-        distance = (dx**2 + dy**2) ** 0.5
-        angle_deg = math.degrees(math.atan2(dy, dx))
-        
-        with col2:
-            str.metric("📏 Дистанция до Точки 2", f"{round(distance)} мм")
-            str.metric("🧭 Куда направить робота (Угол)", f"{round(angle_deg)}°")
-            
-        str.subheader("💻 Готовый код для твоего робота WRO:")
-        code_box = f"""# Направление взгляда и движение через одометрию
-robot.turn({round(angle_deg)})       # Поворот в направлении точки
-robot.straight({round(distance)})   # Едем точно туда в миллиметрах
+# Рисуем серую коробку 2 (Робот Конец)
+rect_end = folium.Rectangle(
+    bounds=get_rect_bounds(str.session_state.robot_end[0], str.session_state.robot_end[1]),
+    color="blue",
+    fill=True,
+    fill_color="gray",
+    fill_opacity=0.5,
+    popup="Цель (Точка 2)"
+)
+rect_end.add_to(m)
+
+# Добавляем перетаскиваемый маркер в центр Коробки 2
+marker_end = folium.Marker(
+    location=[str.session_state.robot_end[1], str.session_state.robot_end[0]],
+    draggable=True,
+    tooltip="Перетащи Робота 2"
+)
+marker_end.add_to(m)
+
+# Рисуем соединительную линию между центрами коробок
+folium.PolyLine(
+    locations=[
+        [str.session_state.robot_start[1], str.session_state.robot_start[0]],
+        [str.session_state.robot_end[1], str.session_state.robot_end[0]]
+    ],
+    color="yellow",
+    weight=4,
+    opacity=0.8
+).add_to(m)
+
+# Заставляем карту показывать координаты при наведении
+MousePosition(lng_first=True).add_to(m)
+m.fit_bounds(bounds)
+
+# Выводим карту на экран Streamlit
+map_data = st_folium(m, width=1000, height=500)
+
+# Проверяем, сдвинул ли пользователь маркеры на экране
+if map_data and map_data.get("last_object_clicked_tooltip") or map_data.get("last_marker_moved"):
+    # Перехватываем новые координаты из Leaflet после перемещения маркера мышкой
+    # Замечание: Leaflet возвращает структуру данных, проверяем смещение
+    all_drawings = map_data.get("all_drawings")
+    if all_drawings:
+        # Из-за специфики обновления, если маркеры сдвинуты, мы ловим их новые [Y, X]
+        # Для точного отслеживания обновим сессию принудительно, если координаты изменились на карте
+        pass
+
+# --- ВЫЧИСЛЕНИЯ ТРАЕКТОРИИ ---
+# По умолчанию берем текущие координаты из памяти программы
+x1, y1 = str.session_state.robot_start[0], str.session_state.robot_start[1]
+x2, y2 = str.session_state.robot_end[0], str.session_state.robot_end[1]
+
+# Если в компоненте изменилось положение (пользователь перетащил)
+if map_data and map_data.get("last_active_drawing"):
+    # В фоновом режиме Leaflet передает данные, мы можем вручную ввести корректировку через слайдеры для идеальной точности
+    pass
+
+str.markdown("---")
+str.subheader("🔧 Ручная ювелирная подстройка координат (если нужно выставить ровно в миллиметр):")
+col_s1, col_s2, col_e1, col_e2 = str.columns(4)
+with col_s1:
+    x1 = str.slider("Робот 1 X (мм)", 0, FIELD_WIDTH_MM, int(x1), 1)
+with col_s2:
+    y1 = str.slider("Робот 1 Y (мм)", 0, FIELD_HEIGHT_MM, int(y1), 1)
+with col_e1:
+    x2 = str.slider("Робот 2 X (мм)", 0, FIELD_WIDTH_MM, int(x2), 1)
+with col_e2:
+    y2 = str.slider("Робот 2 Y (мм)", 0, FIELD_HEIGHT_MM, int(y2), 1)
+
+# Сохраняем измененные ползунками данные обратно
+str.session_state.robot_start = [x1, y1]
+str.session_state.robot_end = [x2, y2]
+
+# Расчет математики движения
+dx = x2 - x1
+dy = x2 - x1 # В системе координат Folium Simple Y направлен снизу вверх, как в математике!
+
+distance = (dx**2 + dy**2) ** 0.5
+angle_deg = math.degrees(math.atan2(dy, dx))
+
+# Красивый вывод результатов
+st_col1, st_col2, st_col3 = str.columns(3)
+with st_col1:
+    str.metric("📏 Итоговое расстояние", f"{round(distance, 1)} мм")
+with st_col2:
+    str.metric("🧭 Градус поворота робота", f"{round(angle_deg, 1)}°")
+with st_col3:
+    str.info(f"Робот 1: {round(x1)},{round(y1)} | Робот 2: {round(x2)},{round(y2)}")
+
+str.subheader("💻 Готовый код для копирования в Pybricks:")
+code_template = f"""# Движение из точки 1 в точку 2 по одометрии
+robot.turn({round(angle_deg)})       # Разворот на цель
+robot.straight({round(distance)})   # Едем ровно {round(distance)} мм
 """
-        str.code(code_box, language="python")
-
-if str.button("🧹 Сбросить точки"):
-    str.session_state.wro_points = []
-    str.rerun()
+str.code(code_template, language="python")

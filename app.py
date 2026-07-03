@@ -41,7 +41,7 @@ html_code = f"""
     
     <!-- Квадрат 1: СТАРТ -->
     <div id="start_box" style="position: absolute; background: rgba(255, 75, 75, 0.4); border: 2px solid #ff4b4b; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 11px;">
-        <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+        <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; pointer-events: none;">
             <span style="z-index: 2; margin-top: -15px;">СТАРТ</span>
             <div id="arrow" style="position: absolute; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 25px solid #ffeb3b; transform: rotate(0deg); transform-origin: center 12.5px; z-index: 1;"></div>
         </div>
@@ -109,7 +109,7 @@ function drawScene() {{
     let distance = Math.sqrt(dx*dx + dy*dy);
     
     if (distance > 5) {{
-        let moveAngle = Math.beta = Math.atan2(dy, dx) * (180 / Math.PI);
+        let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
         let turnAngle = moveAngle - startAngleDeg;
         
         while (turnAngle > 180) turnAngle -= 360;
@@ -153,7 +153,6 @@ function drawScene() {{
     bStart.style.left = (p1.x * kW - sizeW/2) + 'px'; bStart.style.top = (p1.y * kH - sizeH/2) + 'px';
     bEnd.style.left = (p2.x * kW - sizeW/2) + 'px'; bEnd.style.top = (p2.y * kH - sizeH/2) + 'px';
     
-    // Исправлено экранирование для стрелки:
     arrow.style.transform = "rotate(" + (-startAngleDeg + 90) + "deg)";
     txtStartAngle.innerText = Math.round(startAngleDeg) + '°';
     
@@ -174,6 +173,7 @@ function drawScene() {{
     blockCode.innerText = "robot.turn(" + Math.round(finalTurn) + ")\\nrobot.straight(" + Math.round(distance) + ")";
 }}
 
+// ИСПРАВЛЕНО: Колесико мыши теперь четко крутит стрелку старта
 bStart.addEventListener('wheel', (e) => {{
     e.preventDefault();
     if (e.deltaY < 0) {{
@@ -182,12 +182,11 @@ bStart.addEventListener('wheel', (e) => {{
         startAngleDeg = (startAngleDeg - 5 + 360) % 360;
     }}
     drawScene();
-}});
+}}, {{ passive: false }});
 
 function setupDrag(el, pObject) {{
     let isDragging = false;
     el.addEventListener('mousedown', (e) => {{ 
-        if(e.target === arrow || e.target.parentNode === arrow) return;
         isDragging = true; 
         e.preventDefault(); 
     }});

@@ -1,10 +1,8 @@
 import streamlit as str
 import os
 import math
-import base64
 from PIL import Image
 import folium
-from folium.plugins import MousePosition
 from streamlit_folium import st_folium
 
 # Размеры поля WRO 2026
@@ -28,12 +26,8 @@ if image_file is None:
     str.error("❌ Картинка поля не найдена в папке! Загрузите её в репозиторий.")
     str.stop()
 
-# Функция для безопасного кодирования картинки в Base64 (чтобы Folium не ругался)
-def get_image_base64(image_path):
-    with open(image_path, "rb") as img_file:
-        return f"data:image/png;base64,{base64.b64encode(img_file.read()).decode()}"
-
-image_data = get_image_base64(image_file)
+# Открываем изображение через PIL (это гарантирует кроссплатформенность)
+img_obj = Image.open(image_file)
 
 # Инициализация точек в памяти
 if "robot_start" not in str.session_state:
@@ -41,7 +35,7 @@ if "robot_start" not in str.session_state:
 if "robot_end" not in str.session_state:
     str.session_state.robot_end = [1000, 600]
 
-# Создаем карту
+# Создаем карту с простой прямоугольной сеткой
 m = folium.Map(
     location=[FIELD_HEIGHT_MM / 2, FIELD_WIDTH_MM / 2],
     zoom_start=0,
@@ -51,10 +45,11 @@ m = folium.Map(
     dragging=True
 )
 
+# Передаем сам PIL-объект изображения — этот метод поддерживается Folium
 bounds = [[0, 0], [FIELD_HEIGHT_MM, FIELD_WIDTH_MM]]
-folium.ImageOverlay(image=image_data, bounds=bounds).add_to(m)
+folium.raster_layers.ImageOverlay(image=img_obj, bounds=bounds).add_to(m)
 
-# Рисуем элементы
+# Рисуем элементы роботов
 def add_robot_marker(m, coords, color, name):
     half = ZONE_SIZE_MM / 2
     rect_bounds = [[coords[1] - half, coords[0] - half], [coords[1] + half, coords[0] + half]]

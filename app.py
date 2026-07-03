@@ -9,7 +9,7 @@ ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
 str.title("🎯 Живой Навигатор WRO 2026")
-str.write("Свободно перетаскивай оба квадрата. Робот всегда выбирает оптимальное направление разворота (самый короткий путь)!")
+str.write("Свободно перетаскивай оба квадрата. Слайдер снизу управляет стрелкой старта. Кнопка SWAP меняет Старт и Робота местами!")
 
 # Инициализируем угол старта в сессии Python
 if "start_angle" not in str.session_state:
@@ -60,8 +60,8 @@ html_code = f"""
     <div id="end_box" style="position: absolute; background: rgba(0, 0, 255, 0.4); border: 2px solid #00f; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">РОБОТ</div>
 </div>
 
-<!-- Блок живых метрик -->
-<div style="display: flex; gap: 20px; margin-top: 15px; font-family: sans-serif; background: #1e1e1e; padding: 15px; border-radius: 8px; color: white;">
+<!-- Блок живых метрик и кнопка Swap -->
+<div style="display: flex; gap: 20px; margin-top: 15px; font-family: sans-serif; background: #1e1e1e; padding: 15px; border-radius: 8px; color: white; align-items: center;">
     <div style="flex: 1;">
         <span style="color: #aaa; font-size: 14px;">📏 Дистанция пути:</span>
         <div id="live_dist" style="font-size: 24px; font-weight: bold; color: #ffeb3b;">0.0 мм</div>
@@ -74,6 +74,13 @@ html_code = f"""
     <div style="flex: 1;">
         <span style="color: #aaa; font-size: 14px;">📍 Направление старта:</span>
         <div id="live_start_angle" style="font-size: 24px; font-weight: bold; color: #29b6f6;">0°</div>
+    </div>
+    
+    <!-- КНОПКА SWAP -->
+    <div>
+        <button id="btn_swap" style="background: #ff4b4b; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; transition: background 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+            🔄 Поменять местами (Swap)
+        </button>
     </div>
 </div>
 
@@ -96,6 +103,7 @@ const ctx = canvas.getContext('2d');
 const bStart = document.getElementById('start_box');
 const bEnd = document.getElementById('end_box');
 const arrow = document.getElementById('arrow');
+const btnSwap = document.getElementById('btn_swap');
 
 const txtDist = document.getElementById('live_dist');
 const txtAngle = document.getElementById('live_angle');
@@ -121,7 +129,6 @@ function drawScene() {{
         let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
         let turnAngle = moveAngle - startAngleDeg;
         
-        // 🚀 АЛГОРИТМ КРАТЧАЙШЕГО ПУТИ (выбирает самый быстрый разворот)
         turnAngle = (turnAngle + 180) % 360;
         if (turnAngle < 0) turnAngle += 360;
         turnAngle -= 180;
@@ -183,6 +190,19 @@ function drawScene() {{
     let finalTurn = parseFloat(txtAngle.innerText);
     blockCode.innerText = "robot.turn(" + Math.round(finalTurn) + ")\\nrobot.straight(" + Math.round(distance) + ")";
 }}
+
+// Логика кнопки Swap
+btnSwap.addEventListener('click', () => {{
+    let temp = {{ x: p1.x, y: p1.y }};
+    p1.x = p2.x;
+    p1.y = p2.y;
+    p2.x = temp.x;
+    p2.y = temp.y;
+    drawScene();
+}});
+
+btnSwap.addEventListener('mouseover', () => {{ btnSwap.style.background = '#ff3333'; }});
+btnSwap.addEventListener('mouseout', () => {{ btnSwap.style.background = '#ff4b4b'; }});
 
 function setupDrag(el, pObject) {{
     let isDragging = false;

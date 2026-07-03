@@ -9,7 +9,7 @@ ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
 str.title("🎯 Живой Навигатор WRO 2026")
-str.write("Свободно перетаскивай МЫШКОЙ оба квадрата (Старт и Робота). Все данные и код меняются прямо на лету!")
+str.write("Свободно перетаскивай оба квадрата. Наведи мышь на СТАРТ и покрути колёсико (или используй ползунок ниже), чтобы задать начальный угол робота!")
 
 # 1. Поиск картинки поля
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
@@ -33,14 +33,20 @@ START_Y = 950
 END_X = 800
 END_Y = 500
 
-# 2. Монолитный HTML/JS интерфейс с мгновенным обновлением всего
+# 2. Монолитный HTML/JS интерфейс
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
     <canvas id="overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
     
-    <!-- Квадрат 1: СТАРТ (Теперь можно двигать!) -->
-    <div id="start_box" style="position: absolute; background: rgba(255, 75, 75, 0.4); border: 2px solid #ff4b4b; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">СТАРТ</div>
+    <!-- Квадрат 1: СТАРТ со стрелкой направления внутри -->
+    <div id="start_box" style="position: absolute; background: rgba(255, 75, 75, 0.4); border: 2px solid #ff4b4b; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 11px;">
+        <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+            <span style="z-index: 2; margin-top: -15px;">СТАРТ</span>
+            <!-- Стрелка направления -->
+            <div id="arrow" style="position: absolute; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 25px solid #ffeb3b; transform: rotate(0deg); transform-origin: center 12.5px; z-index: 1;"></div>
+        </div>
+    </div>
     
     <!-- Квадрат 2: РОБОТ (ФИНИШ) -->
     <div id="end_box" style="position: absolute; background: rgba(0, 0, 255, 0.4); border: 2px solid #00f; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">РОБОТ</div>
@@ -49,16 +55,17 @@ html_code = f"""
 <!-- Блок живых метрик -->
 <div style="display: flex; gap: 20px; margin-top: 15px; font-family: sans-serif; background: #1e1e1e; padding: 15px; border-radius: 8px; color: white;">
     <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">📏 Дистанция до цели:</span>
+        <span style="color: #aaa; font-size: 14px;">📏 Дистанция пути:</span>
         <div id="live_dist" style="font-size: 24px; font-weight: bold; color: #ffeb3b;">0.0 мм</div>
     </div>
     <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">🧭 Градус разворота:</span>
+        <span style="color: #aaa; font-size: 14px;">🧭 Итоговый угол разворота:</span>
         <div id="live_angle" style="font-size: 24px; font-weight: bold; color: #00e676;">0.0°</div>
+        <div id="snap_info" style="font-size: 11px; color: #ffeb3b; height: 14px; margin-top: 2px;"></div>
     </div>
     <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">📍 Текущие координаты (мм):</span>
-        <div id="live_coords" style="font-size: 15px; margin-top: 5px; font-family: monospace; color: #29b6f6;">Старт: X:0 Y:0 | Робот: X:0 Y:0</div>
+        <span style="color: #aaa; font-size: 14px;">📍 Ориентация старта:</span>
+        <div id="live_start_angle" style="font-size: 24px; font-weight: bold; color: #29b6f6;">0°</div>
     </div>
 </div>
 
@@ -79,20 +86,21 @@ const ctx = canvas.getContext('2d');
 
 const bStart = document.getElementById('start_box');
 const bEnd = document.getElementById('end_box');
+const arrow = document.getElementById('arrow');
 
 const txtDist = document.getElementById('live_dist');
 const txtAngle = document.getElementById('live_angle');
-const txtCoords = document.getElementById('live_coords');
+const txtStartAngle = document.getElementById('live_start_angle');
+const snapInfo = document.getElementById('snap_info');
 const blockCode = document.getElementById('live_code');
 
-// Координаты точек (начинаются там, где ты просил)
 let p1 = {{ x: {START_X}, y: {START_Y} }};
 let p2 = {{ x: {END_X}, y: {END_Y} }};
+let startAngleDeg = 0; // Направление старта в тригонометрических градусах (0 - вправо/восток)
 
 function drawScene() {{
     const kW = img.clientWidth / W_MM;
     const kH = img.clientHeight / H_MM;
-    
     const sizeW = ROB_MM * kW;
     const sizeH = ROB_MM * kH;
     
@@ -101,6 +109,10 @@ function drawScene() {{
     
     bStart.style.left = (p1.x * kW - sizeW/2) + 'px'; bStart.style.top = (p1.y * kH - sizeH/2) + 'px';
     bEnd.style.left = (p2.x * kW - sizeW/2) + 'px'; bEnd.style.top = (p2.y * kH - sizeH/2) + 'px';
+    
+    // Поворот стрелки в CSS (в CSS 0 градусов — это ВВЕРХ, поэтому корректируем на +90 относительно тригонометрии)
+    arrow.style.transform = `rotate(${{-startAngleDeg + 90}}deg)`;
+    txtStartAngle.innerText = Math.round(startAngleDeg) + '°';
     
     canvas.width = img.clientWidth;
     canvas.height = img.clientHeight;
@@ -115,24 +127,65 @@ function drawScene() {{
 
     // ЖИВАЯ ТРИГОНОМЕТРИЯ
     const dx = p2.x - p1.x;
-    const dy = -(p2.y - p1.y); // Инвертируем Y вверх для WRO
+    const dy = -(p2.y - p1.y); 
     
     const distance = Math.sqrt(dx*dx + dy*dy);
-    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    // Абсолютный угол вектора движения
+    let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
     
-    // Обновляем текст на экране в режиме реального времени
+    // ТРЕБУЕМЫЙ ПОВОРОТ = Угол движения минус начальный угол робота
+    let turnAngle = moveAngle - startAngleDeg;
+    
+    // Нормализуем в диапазон от -180 до 180 градусов
+    while (turnAngle > 180) turnAngle -= 360;
+    while (turnAngle <= -180) turnAngle += 360;
+    
+    // АВТОВЫРАВНИВАНИЕ НА 90 ГРАДУСОВ (макс погрешность 2 градуса)
+    let finalAngle = turnAngle;
+    let snaped = false;
+    
+    const targets = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
+    for (let t of targets) {{
+        if (Math.abs(turnAngle - t) <= 2) {{
+            finalAngle = t;
+            snaped = true;
+            break;
+        }}
+    }}
+    
+    if (snaped) {{
+        snapInfo.innerText = `🧲 Сработало автовыравнивание на ${{finalAngle}}° (погрешность < 2°)`;
+    }} else {{
+        snapInfo.innerText = "";
+    }}
+    
     txtDist.innerText = distance.toFixed(1) + ' мм';
-    txtAngle.innerText = angle.toFixed(1) + '°';
-    txtCoords.innerText = `Старт [${{Math.round(p1.x)}}, ${{Math.round(p1.y)}}] ➡️ Робот [${{Math.round(p2.x)}}, ${{Math.round(p2.y)}}]`;
+    txtAngle.innerText = finalAngle.toFixed(1) + '°';
 
-    // Обновляем блок с питоновским кодом прямо на лету!
-    blockCode.innerText = `robot.turn(${{Math.round(angle)}})\\nrobot.straight(${{Math.round(distance)}})`;
+    blockCode.innerText = `robot.turn(${{Math.round(finalAngle)}})\\nrobot.straight(${{Math.round(distance)}})`;
+    
+    // Сохраняем в глобальное окно, чтобы синхронизировать с внешним ползунком Streamlit
+    window.currentStartAngle = startAngleDeg;
 }}
 
-// Логика перетаскивания для любого блока
+// Изменение угла СТАРТа колесиком мыши
+bStart.addEventListener('wheel', (e) => {{
+    e.preventDefault();
+    if (e.deltaY < 0) {{
+        startAngleDeg = (startAngleDeg + 5) % 360;
+    }} else {{
+        startAngleDeg = (startAngleDeg - 5 + 360) % 360;
+    }}
+    drawScene();
+}});
+
 function setupDrag(el, pObject) {{
     let isDragging = false;
-    el.addEventListener('mousedown', (e) => {{ isDragging = true; e.preventDefault(); }});
+    el.addEventListener('mousedown', (e) => {{ 
+        if(e.target === arrow || e.target.parentNode === arrow) return; // Не мешаем колесику
+        isDragging = true; 
+        e.preventDefault(); 
+    }});
     
     window.addEventListener('mousemove', (e) => {{
         if (!isDragging) return;
@@ -152,16 +205,35 @@ function setupDrag(el, pObject) {{
     window.addEventListener('mouseup', () => {{ isDragging = false; }});
 }}
 
-// Включаем движение для обоих объектов
 setupDrag(bStart, p1);
 setupDrag(bEnd, p2);
 
 img.onload = drawScene;
 window.addEventListener('resize', drawScene);
 if (img.complete) drawScene();
+
+// Слушаем изменения угла от ползунка Streamlit
+window.addEventListener('message', (e) => {{
+    if(e.data && e.data.type === 'set_angle') {{
+        startAngleDeg = e.data.angle;
+        drawScene();
+    }}
+}});
 </script>
 """
 
-# Отрисовка интерфейса
+# Отрисовка интерактивного HTML поля
 import streamlit.components.v1 as components
-components.html(html_code, height=750, scrolling=False)
+components.html(html_code, height=760, scrolling=False)
+
+# Слайдер для дублирования управления углом (если у кого-то нет мышки с колесиком)
+str.markdown("### 🧭 Точная настройка начального направления робота:")
+angle_slider = str.slider("Направление робота на старте (в градусах):", -180, 180, 0, step=5)
+
+# Передаем значение из слайдера обратно в JS-компонент на лету
+js_bridge = f"""
+<script>
+window.parent.postMessage({{type: 'set_angle', angle: {angle_slider}}}, '*');
+</script>
+"""
+components.html(js_bridge, height=0)

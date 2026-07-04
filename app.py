@@ -1,6 +1,7 @@
 import streamlit as str
 import os
 import base64
+import json
 
 # Размеры поля WRO 2026
 FIELD_WIDTH_MM = 2362
@@ -8,12 +9,18 @@ FIELD_HEIGHT_MM = 1143
 ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
-str.title("🎯 Живой Навигатор WRO 2026")
-str.write("Свободно перетаскивай оба квадрата. Слайдер снизу управляет стрелкой старта. Кнопка SWAP меняет Старт и Робота местами!")
+str.title("🚀 Про-Навигатор WRO 2026: Мульти-маршрут")
+str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота и скачивай готовый код!")
 
-# Инициализируем угол старта в сессии Python
+# Инициализация углов и точек в сессии Streamlit
 if "start_angle" not in str.session_state:
     str.session_state.start_angle = 0
+if "waypoints" not in str.session_state:
+    # По умолчанию создаем старт и финиш
+    str.session_state.waypoints = [
+        {"x": 200, "y": 950, "type": "straight", "comment": "Старт"},
+        {"x": 800, "y": 500, "type": "straight", "comment": "Первая миссия"}
+    ]
 
 # 1. Поиск картинки поля
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
@@ -27,182 +34,197 @@ if image_file is None:
     str.error("❌ Картинка поля не найдена в репозитории!")
     str.stop()
 
-# Кодируем картинку в Base64
 with open(image_file, "rb") as f:
     img_base64 = base64.b64encode(f.read()).decode()
 
-# Начальные дефолтные позиции (в мм)
-START_X = 200
-START_Y = 950
-END_X = 800
-END_Y = 500
+# 2. Боковая панель управления точками (Пункты 3 и 4)
+str.sidebar.header("📝 Настройка шагов маршрута")
 
-# 2. Слайдер управления углом
-str.markdown("### 🧭 Настройка направления старта:")
-angle_slider = str.slider("Повернуть стрелку старта (градусы):", -180, 180, int(str.session_state.start_angle), step=5)
+# Синхронизация данных из JS
+incoming_data = str.sidebar.text_area("Системный буфер (не изменять)", value="", key="js_data_buffer", label_visibility="collapsed")
+if incoming_data:
+    try:
+        parsed = json.loads(incoming_data)
+        str.session_state.waypoints = parsed["points"]
+    except:
+        pass
+
+# Рендеринг настроек для каждой точки маршрута
+updated_points = list(str.session_state.waypoints)
+for i, pt in enumerate(updated_points):
+    with str.sidebar.expander(f"📍 Точка {i+1}: {pt.get('comment', '') or 'Без имени'}", expanded=(i==len(updated_points)-1)):
+        if i == 0:
+            str.markdown("**Начальная точка (СТАРТ)**")
+            pt["comment"] = str.text_input(f"Заметка {i+1}", value=pt.get("comment", "Старт"), key=f"c_{i}")
+        else:
+            pt["comment"] = str.text_input(f"Заметка {i+1}", value=pt.get("comment", f"Шаг {i}"), key=f"c_{i}")
+            # Пункт 3: Выбор типа движения
+            move_mode = str.radio(
+                f"Тип движения для шага {i+1}:",
+                ["1. Простой код (Дистанция)", "2. Калибровка по датчику цвета (До линии)"],
+                index=0 if pt.get("type", "straight") == "straight" else 1,
+                key=f"t_{i}"
+            )
+            pt["type"] = "straight" if "1." in move_mode else "color_sensor"
+
+str.session_state.waypoints = updated_points
+
+# Слайдер начального направления
+str.markdown("### 🧭 Начальное направление робота:")
+angle_slider = str.slider("Задать угол стрелки старта (градусы):", -180, 180, int(str.session_state.start_angle), step=5)
 str.session_state.start_angle = angle_slider
 
-# 3. HTML/JS интерфейс
+# Превращаем точки в JSON для передачи в JavaScript
+points_json = json.dumps(str.session_state.waypoints)
+
+# 3. HTML / JS Интерфейс (Включает Пункт 1: Мульти-маршрут, Пункт 2: Физический разворот модели)
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
-    <canvas id="overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
-    
-    <!-- Квадрат 1: СТАРТ -->
-    <div id="start_box" style="position: absolute; background: rgba(255, 75, 75, 0.4); border: 2px solid #ff4b4b; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 11px;">
-        <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; pointer-events: none;">
-            <span style="z-index: 2; margin-top: -15px;">СТАРТ</span>
-            <div id="arrow" style="position: absolute; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 25px solid #ffeb3b; transform: rotate(0deg); transform-origin: center 12.5px; z-index: 1;"></div>
-        </div>
-    </div>
-    
-    <!-- Квадрат 2: РОБОТ (ФИНИШ) -->
-    <div id="end_box" style="position: absolute; background: rgba(0, 0, 255, 0.4); border: 2px solid #00f; cursor: move; box-sizing: border-box; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">РОБОТ</div>
+    <canvas id="overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;"></canvas>
+    <div id="boxes_container"></div>
 </div>
 
-<!-- Блок живых метрик и кнопка Swap -->
-<div style="display: flex; gap: 20px; margin-top: 15px; font-family: sans-serif; background: #1e1e1e; padding: 15px; border-radius: 8px; color: white; align-items: center;">
-    <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">📏 Дистанция пути:</span>
-        <div id="live_dist" style="font-size: 24px; font-weight: bold; color: #ffeb3b;">0.0 мм</div>
-    </div>
-    <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">🧭 Оптимальный разворот:</span>
-        <div id="live_angle" style="font-size: 24px; font-weight: bold; color: #00e676;">0.0°</div>
-        <div id="snap_info" style="font-size: 12px; color: #ffeb3b; height: 14px; margin-top: 2px; font-weight: bold;"></div>
-    </div>
-    <div style="flex: 1;">
-        <span style="color: #aaa; font-size: 14px;">📍 Направление старта:</span>
-        <div id="live_start_angle" style="font-size: 24px; font-weight: bold; color: #29b6f6;">0°</div>
-    </div>
-    
-    <!-- КНОПКА SWAP -->
-    <div>
-        <button id="btn_swap" style="background: #ff4b4b; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; transition: background 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-            🔄 Поменять местами (Swap)
-        </button>
-    </div>
+<div style="display: flex; gap: 15px; margin-top: 15px; font-family: sans-serif;">
+    <button id="btn_add" style="background: #28a745; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">➕ Добавить точку</button>
+    <button id="btn_pop" style="background: #dc3545; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">❌ Удалить последнюю</button>
+    <button id="btn_swap" style="background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">🔄 Инвертировать путь (Swap)</button>
+    <button id="btn_export" style="background: #ffc107; color: #1e1e1e; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">💾 Скачать код (.py)</button>
 </div>
 
-<!-- Живой генератор кода для Pybricks -->
+<!-- Генератор Pybricks кода -->
 <div style="margin-top: 15px; font-family: sans-serif;">
-    <h3 style="color: white; margin-bottom: 5px; font-size: 18px;">💻 Мгновенный код для Pybricks:</h3>
-    <pre id="live_code" style="background: #0e1117; padding: 15px; border-radius: 5px; border: 1px solid #30363d; color: #e6edf3; font-family: monospace; font-size: 14px; margin: 0; line-height: 1.5;"></pre>
+    <h3 style="color: white; margin-bottom: 5px; font-size: 18px;">💻 Сгенерированный цепочечный скрипт Pybricks:</h3>
+    <pre id="live_code" style="background: #0e1117; padding: 15px; border-radius: 5px; border: 1px solid #30363d; color: #e6edf3; font-family: monospace; font-size: 14px; margin: 0; line-height: 1.5; white-space: pre-wrap;"></pre>
 </div>
 
 <script>
 const W_MM = {FIELD_WIDTH_MM};
 const H_MM = {FIELD_HEIGHT_MM};
 const ROB_MM = {ZONE_SIZE_MM};
-const SNAP_THRESHOLD = 3.5; 
+const SNAP_THRESHOLD = 3.5;
 
 const img = document.getElementById('field');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
+const boxesContainer = document.getElementById('boxes_container');
 
-const bStart = document.getElementById('start_box');
-const bEnd = document.getElementById('end_box');
-const arrow = document.getElementById('arrow');
-const btnSwap = document.getElementById('btn_swap');
-
-const txtDist = document.getElementById('live_dist');
-const txtAngle = document.getElementById('live_angle');
-const txtStartAngle = document.getElementById('live_start_angle');
-const snapInfo = document.getElementById('snap_info');
-const blockCode = document.getElementById('live_code');
-
-let p1 = {{ x: {START_X}, y: {START_Y} }};
-let p2 = {{ x: {END_X}, y: {END_Y} }};
-let startAngleDeg = {angle_slider}; 
+let pts = {points_json};
+let startAngleDeg = {angle_slider};
 
 function drawScene() {{
     const kW = img.clientWidth / W_MM;
     const kH = img.clientHeight / H_MM;
     const sizeW = ROB_MM * kW;
     const sizeH = ROB_MM * kH;
-    
-    let dx = p2.x - p1.x;
-    let dy = -(p2.y - p1.y);
-    let distance = Math.sqrt(dx*dx + dy*dy);
-    
-    if (distance > 5) {{
-        let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
-        let turnAngle = moveAngle - startAngleDeg;
-        
-        turnAngle = (turnAngle + 180) % 360;
-        if (turnAngle < 0) turnAngle += 360;
-        turnAngle -= 180;
-        
-        const targets = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
-        let targetAngle = null;
-        
-        for (let t of targets) {{
-            if (Math.abs(turnAngle - t) <= SNAP_THRESHOLD) {{
-                targetAngle = t;
-                break;
-            }}
-        }}
-        
-        if (targetAngle !== null) {{
-            let absoluteTargetAngle = targetAngle + startAngleDeg;
-            let rad = absoluteTargetAngle * (Math.PI / 180);
-            
-            p2.x = p1.x + distance * Math.cos(rad);
-            p2.y = p1.y - distance * Math.sin(rad); 
-            
-            dx = p2.x - p1.x;
-            dy = -(p2.y - p1.y);
-            turnAngle = targetAngle;
-            
-            snapInfo.innerText = "🧲 Квадрат примагничен к оси " + targetAngle + "°";
-        }} else {{
-            snapInfo.innerText = "";
-        }}
-        
-        txtAngle.innerText = turnAngle.toFixed(1) + '°';
-    }} else {{
-        txtAngle.innerText = '0.0°';
-        snapInfo.innerText = "";
-    }}
 
-    bStart.style.width = sizeW + 'px'; bStart.style.height = sizeH + 'px';
-    bEnd.style.width = sizeW + 'px'; bEnd.style.height = sizeH + 'px';
-    
-    bStart.style.left = (p1.x * kW - sizeW/2) + 'px'; bStart.style.top = (p1.y * kH - sizeH/2) + 'px';
-    bEnd.style.left = (p2.x * kW - sizeW/2) + 'px'; bEnd.style.top = (p2.y * kH - sizeH/2) + 'px';
-    
-    arrow.style.transform = "rotate(" + (-startAngleDeg + 90) + "deg)";
-    txtStartAngle.innerText = Math.round(startAngleDeg) + '°';
+    boxesContainer.innerHTML = '';
     
     canvas.width = img.clientWidth;
     canvas.height = img.clientHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.beginPath();
-    ctx.moveTo(p1.x * kW, p1.y * kH);
-    ctx.lineTo(p2.x * kW, p2.y * kH);
-    ctx.strokeStyle = '#ffeb3b';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([6, 4]);
-    ctx.stroke();
 
-    txtDist.innerText = distance.toFixed(1) + ' мм';
-    
-    let finalTurn = parseFloat(txtAngle.innerText);
-    blockCode.innerText = "robot.turn(" + Math.round(finalTurn) + ")\\nrobot.straight(" + Math.round(distance) + ")";
+    let currentAngle = startAngleDeg;
+    let pybricksCode = "# Робот собран с помощью Живого Навигатора WRO 2026\\nfrom pybricks.robotics import DriveBase\\nfrom pybricks.pupdevices import Motor, ColorSensor\\nfrom pybricks.parameters import Port\\n\\n# Инициализация (настрой порты под себя)\\nleft_motor = Motor(Port.A)\\nright_motor = Motor(Port.B)\\nrobot = DriveBase(left_motor, right_motor, wheel_diameter=56, axle_track=114)\\nline_sensor = ColorSensor(Port.C)\\n\\n";
+
+    // Отрисовка траектории и симуляция физического поворота габаритов
+    for(let i=0; i < pts.length; i++) {{
+        let p = pts[i];
+        
+        if (i > 0) {{
+            let prev = pts[i-1];
+            let dx = p.x - prev.x;
+            let dy = -(p.y - prev.y);
+            let distance = Math.sqrt(dx*dx + dy*dy);
+            
+            if (distance > 5) {{
+                let moveAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+                let turnAngle = moveAngle - currentAngle;
+                
+                // Оптимальный разворот (-180 до 180)
+                turnAngle = (turnAngle + 180) % 360;
+                if (turnAngle < 0) turnAngle += 360;
+                turnAngle -= 180;
+
+                // Магнитное выравнивание (+-3.5 градуса)
+                const targets = [-180, -135, -90, -45, 0, 45, 90, 135, 180];
+                for (let t of targets) {{
+                    if (Math.abs(turnAngle - t) <= SNAP_THRESHOLD) {{
+                        turnAngle = t;
+                        let absoluteTargetAngle = turnAngle + currentAngle;
+                        let rad = absoluteTargetAngle * (Math.PI / 180);
+                        p.x = prev.x + distance * Math.cos(rad);
+                        p.y = prev.y - distance * Math.sin(rad);
+                        dx = p.x - prev.x;
+                        dy = -(p.y - prev.y);
+                        break;
+                    }}
+                }}
+
+                currentAngle = currentAngle + turnAngle;
+                
+                // Пункт 4: Комментарии берутся из полей ввода Streamlit
+                let comm = p.comment ? "# " + p.comment + "\\n" : "";
+                pybricksCode += comm + "robot.turn(" + Math.round(turnAngle) + ")\\n";
+                
+                // Пункт 3: Генерация в зависимости от типа движения
+                if(p.type === "color_sensor") {{
+                    pybricksCode += "# Калибровка: едем до черной линии\\nrobot.drive(200, 0)\\nwhile line_sensor.reflection() > 15:\\n    pass\\nrobot.stop()\\n\\n";
+                }} else {{
+                    pybricksCode += "robot.straight(" + Math.round(distance) + ")\\n\\n";
+                }}
+
+                // Линия пути
+                ctx.beginPath();
+                ctx.moveTo(prev.x * kW, prev.y * kH);
+                ctx.lineTo(p.x * kW, p.y * kH);
+                ctx.strokeStyle = '#ffeb3b';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([6, 4]);
+                ctx.stroke();
+            }}
+        }}
+
+        // Создание визуального элемента робота на поле
+        const box = document.createElement('div');
+        box.style.position = 'absolute';
+        box.style.width = sizeW + 'px';
+        box.style.height = sizeH + 'px';
+        box.style.left = (p.x * kW - sizeW/2) + 'px';
+        box.style.top = (p.y * kH - sizeH/2) + 'px';
+        box.style.boxSizing = 'border-box';
+        box.style.display = 'flex';
+        box.style.alignItems = 'center';
+        box.style.justifyContent = 'center';
+        box.style.color = 'white';
+        box.style.fontWeight = 'bold';
+        box.style.fontSize = '12px';
+        
+        // Пункт 2: Физический разворот модели робота по курсу движения
+        box.style.transform = "rotate(" + (-currentAngle + 90) + "deg)";
+
+        if (i === 0) {{
+            box.style.background = 'rgba(255, 75, 75, 0.4)';
+            box.style.border = '2px solid #ff4b4b';
+            box.innerHTML = '<div style="position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><span style="z-index:2; margin-top:-10px;">СТАРТ</span><div style="position:absolute; width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:20px solid #ffeb3b; transform:translateY(-5px); z-index:1;"></div></div>';
+        }} else if (i === pts.length - 1) {{
+            box.style.background = 'rgba(0, 0, 255, 0.4)';
+            box.style.border = '2px solid #00f';
+            box.innerText = p.type === "color_sensor" ? "👁️ ЛИНИЯ" : "🤖 РОБОТ";
+        }} else {{
+            box.style.background = 'rgba(255, 235, 59, 0.25)';
+            box.style.border = '2px dashed #ffeb3b';
+            box.innerText = i + 1;
+            box.style.color = '#ffeb3b';
+        }}
+
+        boxesContainer.appendChild(box);
+        setupDrag(box, p);
+    }}
+
+    document.getElementById('live_code').innerText = pybricksCode;
+    window.latestGeneratedCode = pybricksCode;
 }}
-
-// Логика кнопки Swap
-btnSwap.addEventListener('click', () => {{
-    let temp = {{ x: p1.x, y: p1.y }};
-    p1.x = p2.x;
-    p1.y = p2.y;
-    p2.x = temp.x;
-    p2.y = temp.y;
-    drawScene();
-}});
-
-btnSwap.addEventListener('mouseover', () => {{ btnSwap.style.background = '#ff3333'; }});
-btnSwap.addEventListener('mouseout', () => {{ btnSwap.style.background = '#ff4b4b'; }});
 
 function setupDrag(el, pObject) {{
     let isDragging = false;
@@ -226,11 +248,48 @@ function setupDrag(el, pObject) {{
         drawScene();
     }});
     
-    window.addEventListener('mouseup', () => {{ isDragging = false; }});
+    window.addEventListener('mouseup', () => {{ 
+        if(isDragging) {{
+            isDragging = false; 
+            // Передаем обновленные координаты обратно в Python-интерфейс Streamlit
+            const parentData = {{ points: pts }};
+            const buffer = window.parent.document.querySelector('textarea[aria-label="Системный буфер (не изменять)"]');
+            if(buffer) {{
+                buffer.value = JSON.stringify(parentData);
+                buffer.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            }}
+        }}
+    }});
 }}
 
-setupDrag(bStart, p1);
-setupDrag(bEnd, p2);
+// Инструменты управления массивом точек
+document.getElementById('btn_add').addEventListener('click', () => {{
+    let last = pts[pts.length - 1];
+    pts.push({{ x: Math.min(W_MM, last.x + 200), y: Math.max(0, last.y - 200), type: "straight", comment: "Шаг " + (pts.length) }});
+    drawScene();
+}});
+
+document.getElementById('btn_pop').addEventListener('click', () => {{
+    if(pts.length > 2) {{
+        pts.pop();
+        drawScene();
+    }}
+}});
+
+document.getElementById('btn_swap').addEventListener('click', () => {{
+    pts.reverse();
+    drawScene();
+}});
+
+document.getElementById('btn_export').addEventListener('click', () => {{
+    let element = document.createElement('a');
+    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(window.latestGeneratedCode));
+    element.setAttribute('download', 'wro_route.py');
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+}});
 
 img.onload = drawScene;
 window.addEventListener('resize', drawScene);

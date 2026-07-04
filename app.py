@@ -10,9 +10,9 @@ ZONE_SIZE_MM = 250  # Робот 25х25 см
 
 str.set_page_config(layout="wide")
 str.title("🚀 Про-Навигатор WRO 2026: Мульти-маршрут")
-str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота. Код генерируется ниже!")
+str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота.")
 
-# Инициализация углов и точек в сессии Streamlit
+# Инициализация в сессии Streamlit (для боковой панели)
 if "start_angle" not in str.session_state:
     str.session_state.start_angle = 0
 if "waypoints" not in str.session_state:
@@ -20,8 +20,6 @@ if "waypoints" not in str.session_state:
         {"x": 200, "y": 950, "type": "straight", "comment": "Старт"},
         {"x": 800, "y": 500, "type": "straight", "comment": "Первая миссия"}
     ]
-if "generated_py_code" not in str.session_state:
-    str.session_state.generated_py_code = "# Здесь появится твой код"
 
 # 1. Поиск картинки поля
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
@@ -38,31 +36,19 @@ if image_file is None:
 with open(image_file, "rb") as f:
     img_base64 = base64.b64encode(f.read()).decode()
 
-# 2. Боковая панель управления точками
+# 2. Настройки в Sidebar
 str.sidebar.header("📝 Настройка шагов маршрута")
-
-# Синхронизация данных (координаты + готовый код) из JS в Python
-incoming_data = str.sidebar.text_area("Системный буфер", value="", key="js_data_buffer", label_visibility="collapsed")
-if incoming_data:
-    try:
-        parsed = json.loads(incoming_data)
-        str.session_state.waypoints = parsed["points"]
-        if "code" in parsed:
-            str.session_state.generated_py_code = parsed["code"]
-    except:
-        pass
-
-# Рендеринг настроек для каждой точки маршрута
 updated_points = list(str.session_state.waypoints)
+
 for i, pt in enumerate(updated_points):
-    with str.sidebar.expander(f"📍 Точка {i+1}: {pt.get('comment', '') or 'Без имени'}", expanded=(i==len(updated_points)-1)):
+    with str.sidebar.expander(f"📍 Точка {i+1}", expanded=(i == len(updated_points)-1)):
         if i == 0:
             pt["comment"] = str.text_input(f"Заметка {i+1}", value=pt.get("comment", "Старт"), key=f"c_{i}")
         else:
             pt["comment"] = str.text_input(f"Заметка {i+1}", value=pt.get("comment", f"Шаг {i}"), key=f"c_{i}")
             move_mode = str.radio(
-                f"Тип движения для шага {i+1}:",
-                ["1. Простой код (Дистанция)", "2. Калибровка по датчику цвета (До линии)"],
+                f"Тип движения {i+1}:",
+                ["1. Простой код (Дистанция)", "2. Калибровка (До линии)"],
                 index=0 if pt.get("type", "straight") == "straight" else 1,
                 key=f"t_{i}"
             )
@@ -75,10 +61,9 @@ str.markdown("### 🧭 Начальное направление робота:")
 angle_slider = str.slider("Задать угол стрелки старта (градусы):", -180, 180, int(str.session_state.start_angle), step=5)
 str.session_state.start_angle = angle_slider
 
-# Превращаем точки в JSON для передачи в JavaScript
 points_json = json.dumps(str.session_state.waypoints)
 
-# 3. HTML / JS Интерфейс интерактивной карты
+# 3. HTML / JS Интерфейс (Окно генерации кода теперь встроено прямо сюда!)
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
@@ -92,6 +77,15 @@ html_code = f"""
     <button id="btn_swap" style="background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">🔄 Инвертировать путь (Swap)</button>
 </div>
 
+<!-- Встроенное независимое окно с кодом и кнопкой Копировать -->
+<div style="margin-top: 25px; font-family: sans-serif; position: relative; max-width: 1100px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; background: #262730; padding: 10px 15px; border-radius: 6px 6px 0 0; border: 1px solid #464855; border-bottom: none;">
+        <span style="color: white; font-weight: bold; font-size: 14px;">💻 Нативный код Pybricks (Обновляется в реальном времени):</span>
+        <button id="btn_copy" style="background: #1e1e1e; color: #00e676; border: 1px solid #00e676; padding: 5px 12px; font-size: 12px; font-weight: bold; border-radius: 4px; cursor: pointer;">📋 Скопировать код</button>
+    </div>
+    <pre id="live_code" style="background: #0e1117; padding: 15px; border-radius: 0 0 6px 6px; border: 1px solid #464855; color: #e6edf3; font-family: monospace; font-size: 14px; margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-x: auto; max-height: 350px;"></pre>
+</div>
+
 <script>
 const W_MM = {FIELD_WIDTH_MM};
 const H_MM = {FIELD_HEIGHT_MM};
@@ -102,18 +96,11 @@ const img = document.getElementById('field');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
 const boxesContainer = document.getElementById('boxes_container');
+const blockCode = document.getElementById('live_code');
+const btnCopy = document.getElementById('btn_copy');
 
 let pts = {points_json};
 let startAngleDeg = {angle_slider};
-
-function sendDataToPython(currentCode) {{
-    const parentData = {{ points: pts, code: currentCode }};
-    const buffer = window.parent.document.querySelector('textarea[aria-label="Системный буфер"]');
-    if(buffer) {{
-        buffer.value = JSON.stringify(parentData);
-        buffer.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    }}
-}}
 
 function drawScene() {{
     const kW = img.clientWidth / W_MM;
@@ -215,8 +202,8 @@ function drawScene() {{
         setupDrag(box, p);
     }}
     
-    // Передаем сгенерированный код наружу
-    window.currentPybricksCode = pybricksCode;
+    // Мгновенное обновление текста в окне
+    blockCode.innerText = pybricksCode;
 }}
 
 function setupDrag(el, pObject) {{
@@ -239,50 +226,47 @@ function setupDrag(el, pObject) {{
         drawScene();
     }});
     
-    window.addEventListener('mouseup', () => {{ 
-        if(isDragging) {{
-            isDragging = false; 
-            sendDataToPython(window.currentPybricksCode);
-        }}
-    }});
+    window.addEventListener('mouseup', () => {{ isDragging = false; }});
 }}
+
+// Копирование в буфер обмена по кнопке
+btnCopy.addEventListener('click', () => {{
+    navigator.clipboard.writeText(blockCode.innerText).then(() => {{
+        btnCopy.innerText = "✅ Скопировано!";
+        btnCopy.style.color = "#fff";
+        btnCopy.style.background = "#00e676";
+        setTimeout(() => {{
+            btnCopy.innerText = "📋 Скопировать код";
+            btnCopy.style.color = "#00e676";
+            btnCopy.style.background = "#1e1e1e";
+        }}, 1500);
+    }});
+}});
 
 document.getElementById('btn_add').addEventListener('click', () => {{
     let last = pts[pts.length - 1];
     pts.push({{ x: Math.min(W_MM, last.x + 200), y: Math.max(0, last.y - 200), type: "straight", comment: "Шаг " + (pts.length) }});
     drawScene();
-    sendDataToPython(window.currentPybricksCode);
 }});
 
 document.getElementById('btn_pop').addEventListener('click', () => {{
     if(pts.length > 2) {{
         pts.pop();
         drawScene();
-        sendDataToPython(window.currentPybricksCode);
     }}
 }});
 
 document.getElementById('btn_swap').addEventListener('click', () => {{
     pts.reverse();
     drawScene();
-    sendDataToPython(window.currentPybricksCode);
 }});
 
-img.onload = () => {{
-    drawScene();
-    setTimeout(() => sendDataToPython(window.currentPybricksCode), 300);
-}};
+img.onload = drawScene;
 window.addEventListener('resize', drawScene);
-if (img.complete) {{
-    drawScene();
-    setTimeout(() => sendDataToPython(window.currentPybricksCode), 300);
-}}
+if (img.complete) drawScene();
 </script>
 """
 
 import streamlit.components.v1 as components
-components.html(html_code, height=760, scrolling=False)
-
-# 4. Вывод готового кода прямо на экран Streamlit (Пункт из твоего запроса)
-str.markdown("### 💻 Нативный код Pybricks (Можно сразу копировать):")
-str.code(str.session_state.generated_py_code, language="python")
+# Увеличили высоту iframe, чтобы внутри помещалось и поле, и окно с кодом
+components.html(html_code, height=1150, scrolling=False)

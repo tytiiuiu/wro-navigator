@@ -12,14 +12,28 @@ str.set_page_config(layout="wide")
 str.title("🚀 Про-Навигатор WRO 2026: Мульти-маршрут")
 str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота.")
 
-# Инициализация в сессии Streamlit
-if "start_angle" not in str.session_state:
-    str.session_state.start_angle = 0
+# Скрытый буфер синхронизации координат (возвращает точки из JS в Python)
+# Он должен стоять в самом начале, чтобы сессия обновлялась ДО рендеринга виджетов
+incoming_data = str.sidebar.text_area("Системный буфер точек", value="", key="js_pts_buffer", label_visibility="collapsed")
+
+# Инициализация точек в сессии Streamlit
 if "waypoints" not in str.session_state:
     str.session_state.waypoints = [
         {"x": 200, "y": 950, "type": "straight", "comment": "Старт"},
         {"x": 800, "y": 500, "type": "straight", "comment": "Первая миссия"}
     ]
+
+# Если JS прислал обновленные координаты, сохраняем их в сессию, чтобы они не стерлись
+if incoming_data:
+    try:
+        parsed = json.loads(incoming_data)
+        if "points" in parsed:
+            str.session_state.waypoints = parsed["points"]
+    except:
+        pass
+
+if "start_angle" not in str.session_state:
+    str.session_state.start_angle = 0
 
 # Базовый шаблон инициализации по умолчанию
 default_init = """from pybricks.robotics import DriveBase
@@ -50,15 +64,14 @@ with open(image_file, "rb") as f:
 # 2. Настройки в Sidebar
 str.sidebar.header("⚙️ Глобальные настройки")
 
-# Новое поле: Кастомная инициализация робота
 custom_init_code = str.sidebar.text_area(
     "🤖 Блок инициализации (Pybricks):",
     value=default_init,
     height=220,
-    help="Этот код вставится в самое начало программы. Меняй порты и параметры под своего робота."
+    help="При изменении этого текста цепочка шагов больше не сбросится!"
 )
 
-# Экранируем переносы строк для передачи в JavaScript драг-энд-дропа
+# Безопасное экранирование строк
 safe_init_code = custom_init_code.replace("\n", "\\n").replace("'", "\\'")
 
 str.sidebar.markdown("---")
@@ -66,7 +79,7 @@ str.sidebar.header("📝 Настройка шагов маршрута")
 updated_points = list(str.session_state.waypoints)
 
 for i, pt in enumerate(updated_points):
-    with str.sidebar.expander(f"📍 Точка {i+1}", expanded=(i == len(updated_points)-1)):
+    with str.sidebar.expander(f"📍 Точка {i+1}: {pt.get('comment', '') or 'Без имени'}", expanded=(i == len(updated_points)-1)):
         if i == 0:
             pt["comment"] = str.text_input(f"Заметка {i+1}", value=pt.get("comment", "Старт"), key=f"c_{i}")
         else:
@@ -126,7 +139,17 @@ const btnCopy = document.getElementById('btn_copy');
 
 let pts = {points_json};
 let startAngleDeg = {angle_slider};
-let customInit = '{safe_init_code}'; // Твоя кастомная инициализация из Python
+let customInit = '{safe_init_code}';
+
+// Функция отправки точек в буфер Python сессии перед перезагрузкой
+function syncPointsToPython() {{
+    const parentData = {{ points: pts }};
+    const buffer = window.parent.document.querySelector('textarea[aria-label="Системный буфер точек"]');
+    if(buffer) {{
+        buffer.value = JSON.stringify(parentData);
+        buffer.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    }}
+}}
 
 function drawScene() {{
     const kW = img.clientWidth / W_MM;
@@ -140,8 +163,6 @@ function drawScene() {{
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     let currentAngle = startAngleDeg;
-    
-    // Вставляем кастомный код пользователя в шапку файла
     let pybricksCode = "# Робот собран с помощью Живого Навигатора WRO 2026\\n" + customInit + "\\n\\n# --- ПОСТРОЕННЫЙ МАРШРУТ ---\\n";
 
     for(let i=0; i < pts.length; i++) {{
@@ -253,7 +274,12 @@ function setupDrag(el, pObject) {{
         drawScene();
     }});
     
-    window.addEventListener('mouseup', () => {{ isDragging = false; }});
+    window.addEventListener('mouseup', () => {{ 
+        if(isDragging) {{
+            isDragging = false; 
+            syncPointsToPython(); // Сохраняем точки после каждого перетаскивания
+        }}
+    }});
 }}
 
 btnCopy.addEventListener('click', () => {{
@@ -273,18 +299,21 @@ document.getElementById('btn_add').addEventListener('click', () => {{
     let last = pts[pts.length - 1];
     pts.push({{ x: Math.min(W_MM, last.x + 200), y: Math.max(0, last.y - 200), type: "straight", comment: "Шаг " + (pts.length) }});
     drawScene();
+    syncPointsToPython(); // Сохраняем при добавлении точки
 }});
 
 document.getElementById('btn_pop').addEventListener('click', () => {{
     if(pts.length > 2) {{
         pts.pop();
         drawScene();
+        syncPointsToPython(); // Сохраняем при удалении
     }}
 }});
 
 document.getElementById('btn_swap').addEventListener('click', () => {{
     pts.reverse();
     drawScene();
+    syncPointsToPython(); // Сохраняем при инверсии
 }});
 
 img.onload = drawScene;

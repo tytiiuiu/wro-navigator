@@ -12,7 +12,7 @@ str.set_page_config(layout="wide")
 str.title("🚀 Про-Навигатор WRO 2026: Мульти-маршрут")
 str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота.")
 
-# Инициализация в сессии Streamlit (для боковой панели)
+# Инициализация в сессии Streamlit
 if "start_angle" not in str.session_state:
     str.session_state.start_angle = 0
 if "waypoints" not in str.session_state:
@@ -20,6 +20,17 @@ if "waypoints" not in str.session_state:
         {"x": 200, "y": 950, "type": "straight", "comment": "Старт"},
         {"x": 800, "y": 500, "type": "straight", "comment": "Первая миссия"}
     ]
+
+# Базовый шаблон инициализации по умолчанию
+default_init = """from pybricks.robotics import DriveBase
+from pybricks.pupdevices import Motor, ColorSensor
+from pybricks.parameters import Port
+
+# Твоя конфигурация робота
+left_motor = Motor(Port.A)
+right_motor = Motor(Port.B)
+robot = DriveBase(left_motor, right_motor, wheel_diameter=56, axle_track=114)
+line_sensor = ColorSensor(Port.C)"""
 
 # 1. Поиск картинки поля
 img_extensions = ('.png', '.jpg', '.jpeg', '.webp', '.jfif')
@@ -37,6 +48,20 @@ with open(image_file, "rb") as f:
     img_base64 = base64.b64encode(f.read()).decode()
 
 # 2. Настройки в Sidebar
+str.sidebar.header("⚙️ Глобальные настройки")
+
+# Новое поле: Кастомная инициализация робота
+custom_init_code = str.sidebar.text_area(
+    "🤖 Блок инициализации (Pybricks):",
+    value=default_init,
+    height=220,
+    help="Этот код вставится в самое начало программы. Меняй порты и параметры под своего робота."
+)
+
+# Экранируем переносы строк для передачи в JavaScript драг-энд-дропа
+safe_init_code = custom_init_code.replace("\n", "\\n").replace("'", "\\'")
+
+str.sidebar.markdown("---")
 str.sidebar.header("📝 Настройка шагов маршрута")
 updated_points = list(str.session_state.waypoints)
 
@@ -63,7 +88,7 @@ str.session_state.start_angle = angle_slider
 
 points_json = json.dumps(str.session_state.waypoints)
 
-# 3. HTML / JS Интерфейс (Окно генерации кода теперь встроено прямо сюда!)
+# 3. HTML / JS Интерфейс
 html_code = f"""
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
@@ -77,13 +102,13 @@ html_code = f"""
     <button id="btn_swap" style="background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">🔄 Инвертировать путь (Swap)</button>
 </div>
 
-<!-- Встроенное независимое окно с кодом и кнопкой Копировать -->
+<!-- Окно с кодом -->
 <div style="margin-top: 25px; font-family: sans-serif; position: relative; max-width: 1100px;">
     <div style="display: flex; justify-content: space-between; align-items: center; background: #262730; padding: 10px 15px; border-radius: 6px 6px 0 0; border: 1px solid #464855; border-bottom: none;">
         <span style="color: white; font-weight: bold; font-size: 14px;">💻 Нативный код Pybricks (Обновляется в реальном времени):</span>
         <button id="btn_copy" style="background: #1e1e1e; color: #00e676; border: 1px solid #00e676; padding: 5px 12px; font-size: 12px; font-weight: bold; border-radius: 4px; cursor: pointer;">📋 Скопировать код</button>
     </div>
-    <pre id="live_code" style="background: #0e1117; padding: 15px; border-radius: 0 0 6px 6px; border: 1px solid #464855; color: #e6edf3; font-family: monospace; font-size: 14px; margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-x: auto; max-height: 350px;"></pre>
+    <pre id="live_code" style="background: #0e1117; padding: 15px; border-radius: 0 0 6px 6px; border: 1px solid #464855; color: #e6edf3; font-family: monospace; font-size: 14px; margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-x: auto; max-height: 400px;"></pre>
 </div>
 
 <script>
@@ -101,6 +126,7 @@ const btnCopy = document.getElementById('btn_copy');
 
 let pts = {points_json};
 let startAngleDeg = {angle_slider};
+let customInit = '{safe_init_code}'; // Твоя кастомная инициализация из Python
 
 function drawScene() {{
     const kW = img.clientWidth / W_MM;
@@ -114,7 +140,9 @@ function drawScene() {{
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     let currentAngle = startAngleDeg;
-    let pybricksCode = "# Робот собран с помощью Живого Навигатора WRO 2026\\nfrom pybricks.robotics import DriveBase\\nfrom pybricks.pupdevices import Motor, ColorSensor\\nfrom pybricks.parameters import Port\\n\\n# Инициализация\\nleft_motor = Motor(Port.A)\\nright_motor = Motor(Port.B)\\nrobot = DriveBase(left_motor, right_motor, wheel_diameter=56, axle_track=114)\\nline_sensor = ColorSensor(Port.C)\\n\\n";
+    
+    // Вставляем кастомный код пользователя в шапку файла
+    let pybricksCode = "# Робот собран с помощью Живого Навигатора WRO 2026\\n" + customInit + "\\n\\n# --- ПОСТРОЕННЫЙ МАРШРУТ ---\\n";
 
     for(let i=0; i < pts.length; i++) {{
         let p = pts[i];
@@ -202,7 +230,6 @@ function drawScene() {{
         setupDrag(box, p);
     }}
     
-    // Мгновенное обновление текста в окне
     blockCode.innerText = pybricksCode;
 }}
 
@@ -229,7 +256,6 @@ function setupDrag(el, pObject) {{
     window.addEventListener('mouseup', () => {{ isDragging = false; }});
 }}
 
-// Копирование в буфер обмена по кнопке
 btnCopy.addEventListener('click', () => {{
     navigator.clipboard.writeText(blockCode.innerText).then(() => {{
         btnCopy.innerText = "✅ Скопировано!";
@@ -268,5 +294,4 @@ if (img.complete) drawScene();
 """
 
 import streamlit.components.v1 as components
-# Увеличили высоту iframe, чтобы внутри помещалось и поле, и окно с кодом
-components.html(html_code, height=1150, scrolling=False)
+components.html(html_code, height=1200, scrolling=False)

@@ -13,7 +13,6 @@ str.title("🚀 Про-Навигатор WRO 2026: Мульти-маршрут"
 str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота.")
 
 # Скрытый буфер синхронизации координат (возвращает точки из JS в Python)
-# Он должен стоять в самом начале, чтобы сессия обновлялась ДО рендеринга виджетов
 incoming_data = str.sidebar.text_area("Системный буфер точек", value="", key="js_pts_buffer", label_visibility="collapsed")
 
 # Инициализация точек в сессии Streamlit
@@ -23,7 +22,7 @@ if "waypoints" not in str.session_state:
         {"x": 800, "y": 500, "type": "straight", "comment": "Первая миссия"}
     ]
 
-# Если JS прислал обновленные координаты, сохраняем их в сессию, чтобы они не стерлись
+# Перехват координат из буфера
 if incoming_data:
     try:
         parsed = json.loads(incoming_data)
@@ -101,8 +100,72 @@ str.session_state.start_angle = angle_slider
 
 points_json = json.dumps(str.session_state.waypoints)
 
-# 3. HTML / JS Интерфейс
+# 3. HTML / JS Интерфейс с модальным окном инструкции
 html_code = f"""
+<!-- Стили для красивого модального окна инструкции -->
+<style>
+.modal-overlay {{
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex; justify-content: center; align-items: center;
+    z-index: 9999;
+    font-family: sans-serif;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}}
+.modal-window {{
+    background: #1e1e24;
+    color: #e6edf3;
+    padding: 30px;
+    border-radius: 12px;
+    max-width: 550px;
+    width: 90%;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    border: 1px solid #464855;
+    text-align: center;
+}}
+.modal-window h2 {{
+    color: #00e676;
+    margin-top: 0;
+}}
+.modal-window ul {{
+    text-align: left;
+    line-height: 1.6;
+    font-size: 14px;
+    margin-bottom: 25px;
+}}
+.modal-btn {{
+    background: #00e676;
+    color: #0e1117;
+    border: none;
+    padding: 12px 40px;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+}}
+.modal-btn:hover {{
+    background: #00b357;
+}}
+</style>
+
+<!-- Модальное окно инструкции при входе -->
+<div id="instruction_modal" class="modal-overlay">
+    <div class="modal-window">
+        <h2>🤖 Инструкция к Про-Навигатору</h2>
+        <p>Добро пожаловать в генератор траекторий WRO 2026! Вот как с ним работать:</p>
+        <ul>
+            <li>📍 <b>Перетаскивание:</b> Двигай кубики робота по полю мышкой, чтобы выстроить маршрут.</li>
+            <li>➕ <b>Управление шагами:</b> Используй кнопки под картой, чтобы добавлять новые точки или удалять ошибочные.</li>
+            <li>⚙️ <b>Кастомизация:</b> В левой панели (Sidebar) ты можешь переписать порты в блоке инициализации, и они не сбросят твои точки.</li>
+            <li>💻 <b>Копирование:</b> Готовый код Pybricks генерируется внизу страницы в реальном времени. Нажми «Скопировать код» и вставь в среду разработки!</li>
+        </ul>
+        <button class="modal-btn" id="btn_modal_ok">OK</button>
+    </div>
+</div>
+
 <div id="container" style="position: relative; inline-block; width: 100%; max-width: 1100px; user-select: none;">
     <img id="field" src="data:image/png;base64,{img_base64}" style="width: 100%; height: auto; display: block;">
     <canvas id="overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;"></canvas>
@@ -136,12 +199,21 @@ const ctx = canvas.getContext('2d');
 const boxesContainer = document.getElementById('boxes_container');
 const blockCode = document.getElementById('live_code');
 const btnCopy = document.getElementById('btn_copy');
+const modal = document.getElementById('instruction_modal');
+const btnModalOk = document.getElementById('btn_modal_ok');
 
 let pts = {points_json};
 let startAngleDeg = {angle_slider};
 let customInit = '{safe_init_code}';
 
-// Функция отправки точек в буфер Python сессии перед перезагрузкой
+// Обработчик закрытия модального окна
+btnModalOk.addEventListener('click', () => {{
+    modal.style.opacity = '0';
+    setTimeout(() => {{
+        modal.style.display = 'none';
+    }}, 300);
+}});
+
 function syncPointsToPython() {{
     const parentData = {{ points: pts }};
     const buffer = window.parent.document.querySelector('textarea[aria-label="Системный буфер точек"]');
@@ -277,7 +349,7 @@ function setupDrag(el, pObject) {{
     window.addEventListener('mouseup', () => {{ 
         if(isDragging) {{
             isDragging = false; 
-            syncPointsToPython(); // Сохраняем точки после каждого перетаскивания
+            syncPointsToPython();
         }}
     }});
 }}
@@ -299,21 +371,21 @@ document.getElementById('btn_add').addEventListener('click', () => {{
     let last = pts[pts.length - 1];
     pts.push({{ x: Math.min(W_MM, last.x + 200), y: Math.max(0, last.y - 200), type: "straight", comment: "Шаг " + (pts.length) }});
     drawScene();
-    syncPointsToPython(); // Сохраняем при добавлении точки
+    syncPointsToPython();
 }});
 
 document.getElementById('btn_pop').addEventListener('click', () => {{
     if(pts.length > 2) {{
         pts.pop();
         drawScene();
-        syncPointsToPython(); // Сохраняем при удалении
+        syncPointsToPython();
     }}
 }});
 
 document.getElementById('btn_swap').addEventListener('click', () => {{
     pts.reverse();
     drawScene();
-    syncPointsToPython(); // Сохраняем при инверсии
+    syncPointsToPython();
 }});
 
 img.onload = drawScene;

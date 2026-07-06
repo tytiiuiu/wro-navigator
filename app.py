@@ -12,7 +12,7 @@ str.set_page_config(layout="wide")
 str.title("🚀 Про-Навигатор WRO 2026: Мульти-маршрут")
 str.write("Кликни на поле, чтобы построить цепочку шагов. Выбирай тип движения для каждой точки, вращай робота.")
 
-# Скрытый буфер синхронизации координат (возвращает точки из JS в Python)
+# Скрытый буфер синхронизации координат
 incoming_data = str.sidebar.text_area("Системный буфер точек", value="", key="js_pts_buffer", label_visibility="collapsed")
 
 # Инициализация точек в сессии Streamlit
@@ -66,19 +66,51 @@ str.sidebar.header("⚙️ Глобальные настройки")
 custom_init_code = str.sidebar.text_area(
     "🤖 Блок инициализации (Pybricks):",
     value=default_init,
-    height=220,
+    height=200,
     help="При изменении этого текста цепочка шагов больше не сбросится!"
 )
 
 # Безопасное экранирование строк
 safe_init_code = custom_init_code.replace("\n", "\\n").replace("'", "\\'")
 
+# Функционал Экспорта / Импорта маршрута в Sidebar
+str.sidebar.markdown("### 💾 Сохранение траектории")
+col_exp, col_imp = str.sidebar.columns(2)
+
+with col_exp:
+    route_json_string = json.dumps(str.session_state.waypoints, indent=2, ensure_ascii=False)
+    str.download_button(
+        label="📥 Скачать JSON",
+        data=route_json_string,
+        file_name="wro_route.json",
+        mime="application/json",
+        use_container_width=True
+    )
+
+with col_imp:
+    uploaded_file = str.file_uploader("Загрузить JSON", type=["json"], label_visibility="collapsed")
+    if uploaded_file is not None:
+        try:
+            str.session_state.waypoints = json.load(uploaded_file)
+            str.rerun()
+        except:
+            str.sidebar.error("Ошибка чтения JSON файла")
+
 str.sidebar.markdown("---")
 str.sidebar.header("📝 Настройка шагов маршрута")
 updated_points = list(str.session_state.waypoints)
 
+# Переменная для отслеживания активной (раскрытой) точки в UI
+active_index = len(updated_points) - 1 
+
 for i, pt in enumerate(updated_points):
-    with str.sidebar.expander(f"📍 Точка {i+1}: {pt.get('comment', '') or 'Без имени'}", expanded=(i == len(updated_points)-1)):
+    expander_label = f"📍 Точка {i+1}: {pt.get('comment', '') or 'Без имени'}"
+    is_expanded = (i == len(updated_points)-1)
+    
+    with str.sidebar.expander(expander_label, expanded=is_expanded):
+        if is_expanded:
+            active_index = i
+            
         if i == 0:
             pt["comment"] = str.text_input(f"Заметка {i+1}", value=pt.get("comment", "Старт"), key=f"c_{i}")
         else:
@@ -100,9 +132,8 @@ str.session_state.start_angle = angle_slider
 
 points_json = json.dumps(str.session_state.waypoints)
 
-# 3. HTML / JS Интерфейс с модальным окном инструкции
+# 3. HTML / JS Интерфейс
 html_code = f"""
-<!-- Стили для красивого модального окна инструкции -->
 <style>
 .modal-overlay {{
     position: fixed;
@@ -111,7 +142,8 @@ html_code = f"""
     display: flex; justify-content: center; align-items: center;
     z-index: 9999;
     font-family: sans-serif;
-    opacity: 1;
+    opacity: 0;
+    display: none;
     transition: opacity 0.3s ease;
 }}
 .modal-window {{
@@ -144,23 +176,29 @@ html_code = f"""
     font-weight: bold;
     border-radius: 6px;
     cursor: pointer;
-    transition: background 0.2s;
 }}
-.modal-btn:hover {{
-    background: #00b357;
+.modal-btn:hover {{ background: #00b357; }}
+
+@keyframes pulse-glow {{
+    0% {{ box-shadow: 0 0 5px #00e676, inset 0 0 5px #00e676; }}
+    50% {{ box-shadow: 0 0 20px #00e676, inset 0 0 15px #00e676; border-color: #00e676 !important; }}
+    100% {{ box-shadow: 0 0 5px #00e676, inset 0 0 5px #00e676; }}
+}}
+.active-robot {{
+    animation: pulse-glow 2s infinite ease-in-out;
+    background: rgba(0, 230, 118, 0.35) !important;
 }}
 </style>
 
-<!-- Модальное окно инструкции при входе -->
 <div id="instruction_modal" class="modal-overlay">
     <div class="modal-window">
         <h2>🤖 Инструкция к Про-Навигатору</h2>
         <p>Добро пожаловать в генератор траекторий WRO 2026! Вот как с ним работать:</p>
         <ul>
-            <li>📍 <b>Перетаскивание:</b> Двигай кубики робота по полю мышкой, чтобы выстроить маршрут.</li>
-            <li>➕ <b>Управление шагами:</b> Используй кнопки под картой, чтобы добавлять новые точки или удалять ошибочные.</li>
-            <li>⚙️ <b>Кастомизация:</b> В левой панели (Sidebar) ты можешь переписать порты в блоке инициализации, и они не сбросят твои точки.</li>
-            <li>💻 <b>Копирование:</b> Готовый код Pybricks генерируется внизу страницы в реальном времени. Нажми «Скопировать код» и вставь в среду разработки!</li>
+            <li>📍 <b>Перетаскивание:</b> Двигай кубики робота по полю мышкой или пальцем на планшете.</li>
+            <li>➕ <b>Управление шагами:</b> Используй кнопки под картой для гибкого изменения маршрута.</li>
+            <li>⚙️ <b>Подсветка шага:</b> Активная точка, открытая в левой панели, будет мягко пульсировать зелёным неоном на поле!</li>
+            <li>💾 <b>Сохранение:</b> Ты можешь скачать траекторию в файл JSON и загрузить её обратно в любой день.</li>
         </ul>
         <button class="modal-btn" id="btn_modal_ok">OK</button>
     </div>
@@ -172,10 +210,10 @@ html_code = f"""
     <div id="boxes_container"></div>
 </div>
 
-<div style="display: flex; gap: 15px; margin-top: 15px; font-family: sans-serif;">
+<div style="display: flex; gap: 15px; margin-top: 15px; font-family: sans-serif; flex-wrap: wrap;">
     <button id="btn_add" style="background: #28a745; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">➕ Добавить точку</button>
     <button id="btn_pop" style="background: #dc3545; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">❌ Удалить последнюю</button>
-    <button id="btn_swap" style="background: #007bff; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">🔄 Инвертировать путь (Swap)</button>
+    <button id="btn_clear" style="background: #6c757d; color: white; border: none; padding: 12px 20px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer;">🧹 Очистить всё</button>
 </div>
 
 <!-- Окно с кодом -->
@@ -192,6 +230,7 @@ const W_MM = {FIELD_WIDTH_MM};
 const H_MM = {FIELD_HEIGHT_MM};
 const ROB_MM = {ZONE_SIZE_MM};
 const SNAP_THRESHOLD = 3.5;
+const activeIndexFromPython = {active_index};
 
 const img = document.getElementById('field');
 const canvas = document.getElementById('overlay');
@@ -206,12 +245,15 @@ let pts = {points_json};
 let startAngleDeg = {angle_slider};
 let customInit = '{safe_init_code}';
 
-// Обработчик закрытия модального окна
+if (!localStorage.getItem('wro_navigator_visited')) {{
+    modal.style.display = 'flex';
+    setTimeout(() => {{ modal.style.opacity = '1'; }}, 50);
+}}
+
 btnModalOk.addEventListener('click', () => {{
     modal.style.opacity = '0';
-    setTimeout(() => {{
-        modal.style.display = 'none';
-    }}, 300);
+    localStorage.setItem('wro_navigator_visited', 'true');
+    setTimeout(() => {{ modal.style.display = 'none'; }}, 300);
 }});
 
 function syncPointsToPython() {{
@@ -304,54 +346,64 @@ function drawScene() {{
         box.style.fontSize = '12px';
         box.style.transform = "rotate(" + (-currentAngle + 90) + "deg)";
 
+        if (i === activeIndexFromPython) {{
+            box.classList.add('active-robot');
+        }}
+
         if (i === 0) {{
-            box.style.background = 'rgba(255, 75, 75, 0.4)';
-            box.style.border = '2px solid #ff4b4b';
+            if (!box.classList.contains('active-robot')) {{
+                box.style.background = 'rgba(255, 75, 75, 0.4)';
+                box.style.border = '2px solid #ff4b4b';
+            }}
             box.innerHTML = '<div style="position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><span style="z-index:2; margin-top:-10px;">СТАРТ</span><div style="position:absolute; width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:20px solid #ffeb3b; transform:translateY(-5px); z-index:1;"></div></div>';
         }} else if (i === pts.length - 1) {{
-            box.style.background = 'rgba(0, 0, 255, 0.4)';
-            box.style.border = '2px solid #00f';
+            if (!box.classList.contains('active-robot')) {{
+                box.style.background = 'rgba(0, 0, 255, 0.4)';
+                box.style.border = '2px solid #00f';
+            }}
             box.innerText = p.type === "color_sensor" ? "👁️ ЛИНИЯ" : "🤖 РОБОТ";
         }} else {{
-            box.style.background = 'rgba(255, 235, 59, 0.25)';
-            box.style.border = '2px dashed #ffeb3b';
+            if (!box.classList.contains('active-robot')) {{
+                box.style.background = 'rgba(255, 235, 59, 0.25)';
+                box.style.border = '2px dashed #ffeb3b';
+            }}
             box.innerText = i + 1;
             box.style.color = '#ffeb3b';
         }}
 
         boxesContainer.appendChild(box);
-        setupDrag(box, p);
+        setupDragAndTouch(box, p);
     }}
     
     blockCode.innerText = pybricksCode;
 }}
 
-function setupDrag(el, pObject) {{
+function setupDragAndTouch(el, pObject) {{
     let isDragging = false;
-    el.addEventListener('mousedown', (e) => {{ 
-        isDragging = true; 
-        e.preventDefault(); 
-    }});
-    
-    window.addEventListener('mousemove', (e) => {{
-        if (!isDragging) return;
+
+    const moveHandler = (clientX, clientY) => {{
         const rect = img.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
         const kW = img.clientWidth / W_MM;
         const kH = img.clientHeight / H_MM;
         
         pObject.x = Math.max(0, Math.min(W_MM, mouseX / kW));
         pObject.y = Math.max(0, Math.min(H_MM, mouseY / kH));
         drawScene();
-    }});
-    
-    window.addEventListener('mouseup', () => {{ 
-        if(isDragging) {{
-            isDragging = false; 
-            syncPointsToPython();
+    }};
+
+    el.addEventListener('mousedown', (e) => {{ isDragging = true; e.preventDefault(); }});
+    window.addEventListener('mousemove', (e) => {{ if (isDragging) moveHandler(e.clientX, e.clientY); }});
+    window.addEventListener('mouseup', () => {{ if(isDragging) {{ isDragging = false; syncPointsToPython(); }} }});
+
+    el.addEventListener('touchstart', (e) => {{ isDragging = true; }}, {{ passive: true }});
+    window.addEventListener('touchmove', (e) => {{ 
+        if (isDragging && e.touches.length > 0) {{
+            moveHandler(e.touches[0].clientX, e.touches[0].clientY);
         }}
-    }});
+    }}, {{ passive: true }});
+    window.addEventListener('touchend', () => {{ if(isDragging) {{ isDragging = false; syncPointsToPython(); }} }});
 }}
 
 btnCopy.addEventListener('click', () => {{
@@ -382,8 +434,11 @@ document.getElementById('btn_pop').addEventListener('click', () => {{
     }}
 }});
 
-document.getElementById('btn_swap').addEventListener('click', () => {{
-    pts.reverse();
+document.getElementById('btn_clear').addEventListener('click', () => {{
+    pts = [
+        {{ "x": 200, "y": 950, "type": "straight", "comment": "Старт" }},
+        {{ "x": 500, "y": 500, "type": "straight", "comment": "Точка 2" }}
+    ];
     drawScene();
     syncPointsToPython();
 }});

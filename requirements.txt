@@ -1,4 +1,2 @@
 streamlit
-pillow
-streamlit-image-coordinates
-streamlit-folium
+wsgi-intercept
